@@ -1,4 +1,5 @@
 export type CompanyStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+export type CompanyApprovalMode = 'MANUAL' | 'AUTOMATIC';
 
 export class Company {
   constructor(
@@ -9,6 +10,7 @@ export class Company {
     public readonly status: CompanyStatus,
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
+    public approvalMode: CompanyApprovalMode = 'MANUAL',
   ) {}
 
   static create(props: { name: string; slug: string; description?: string | null; status?: CompanyStatus }): Company {
@@ -20,6 +22,7 @@ export class Company {
       props.status ?? 'ACTIVE',
       new Date(),
       new Date(),
+      'MANUAL',
     );
   }
 }

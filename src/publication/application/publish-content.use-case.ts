@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
+import { ContentAssetRepository } from '../../content/domain/content-asset.repository.interface.js';
+import { MediaAssetRepository } from '../../media/domain/media-asset.repository.interface.js';
+import { MediaAssetUrlProvider } from '../../media/domain/media-asset-url-provider.interface.js';
+import { VideoAssetRepository } from '../../video-generation/domain/video-asset.repository.interface.js';
 import { SocialAccountRepository } from '../domain/social-account.repository.interface.js';
 import { SocialCredentialRepository } from '../domain/social-credential.repository.interface.js';
 import { PublicationAttemptRepository } from '../domain/publication-attempt.repository.interface.js';
 import { PublicationRepository } from '../domain/publication.repository.interface.js';
 import { PublicationGateService } from '../domain/publication-gate.service.interface.js';
-import { SocialPublisher } from '../domain/social-publisher.interface.js';
+import { SocialPublisher, SocialPublishMediaType } from '../domain/social-publisher.interface.js';
 import { Publication } from '../domain/publication.entity.js';
 import { PublicationAttempt } from '../domain/publication-attempt.entity.js';
 
@@ -19,6 +23,10 @@ export type PublishContentInput = {
 export class PublishContentUseCase {
   constructor(
     private readonly contentRepository: ContentRepository,
+    private readonly contentAssetRepository: ContentAssetRepository,
+    private readonly mediaAssetRepository: MediaAssetRepository,
+    private readonly mediaAssetUrlProvider: MediaAssetUrlProvider,
+    private readonly videoAssetRepository: VideoAssetRepository,
     private readonly socialAccountRepository: SocialAccountRepository,
     private readonly socialCredentialRepository: SocialCredentialRepository,
     private readonly publicationRepository: PublicationRepository,
@@ -38,6 +46,11 @@ export class PublishContentUseCase {
       throw new NotFoundException('Social account not found for this company.');
     }
 
+    let publication = await this.publicationRepository.findLatestByContentAndAccount(input.contentId, input.socialAccountId);
+    if (publication?.status === 'PUBLISHED') {
+      return publication;
+    }
+
     const gate = await this.publicationGateService.authorize({
       companyId: input.companyId,
       contentId: input.contentId,
@@ -48,7 +61,6 @@ export class PublishContentUseCase {
       throw new UnauthorizedException(gate.reasons.join('; '));
     }
 
-    let publication = await this.publicationRepository.findLatestByContentAndAccount(input.contentId, input.socialAccountId);
     if (!publication) {
       publication = Publication.create({
         companyId: input.companyId,
@@ -64,20 +76,25 @@ export class PublishContentUseCase {
       throw new NotFoundException('No active credential found for this social account.');
     }
 
+    const media = await this.resolvePublishMedia(input.contentId);
     const result = await this.socialPublisher.publish({
       companyId: input.companyId,
       contentId: input.contentId,
       publication,
       socialAccount,
       credential,
+      caption: content.script ?? content.title,
+      mediaUrl: media?.url ?? null,
+      mediaType: media?.mediaType,
     });
 
     publication.markPublished(result.externalPostId, result.metadata ?? null);
     publication = await this.publicationRepository.update(publication);
 
+    const previousAttempts = await this.publicationAttemptRepository.findByPublication(publication.id);
     const attempt = PublicationAttempt.create({
       publicationId: publication.id,
-      attemptNumber: 1,
+      attemptNumber: previousAttempts.reduce((max, previous) => Math.max(max, previous.attemptNumber), 0) + 1,
       status: 'PUBLISHED',
       providerResponse: result.metadata ?? { externalPostId: result.externalPostId },
     });
@@ -90,5 +107,44 @@ export class PublishContentUseCase {
     }
 
     return publication;
+  }
+
+  private async resolvePublishMedia(
+    contentId: string,
+  ): Promise<{ url: string; mediaType: SocialPublishMediaType } | null> {
+    const videoAssets = await this.videoAssetRepository.findByContent(contentId);
+    const readyVideo = videoAssets
+      .filter((asset) => asset.status === 'READY')
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
+
+    const videoUrl =
+      readyVideo?.metadata && typeof readyVideo.metadata.storageUrl === 'string'
+        ? readyVideo.metadata.storageUrl
+        : null;
+    if (videoUrl) {
+      return { url: videoUrl, mediaType: 'REELS' };
+    }
+
+    const contentAssets = await this.contentAssetRepository.findByContent(contentId);
+    for (const contentAsset of contentAssets) {
+      if (!contentAsset.mediaAssetId) {
+        continue;
+      }
+      const mediaAsset = await this.mediaAssetRepository.findById(contentAsset.mediaAssetId);
+      if (!mediaAsset) {
+        continue;
+      }
+      const url =
+        mediaAsset.metadata && typeof mediaAsset.metadata.storageUrl === 'string'
+          ? mediaAsset.metadata.storageUrl
+          : this.mediaAssetUrlProvider.createUrl(mediaAsset);
+      const mediaType: SocialPublishMediaType =
+        mediaAsset.kind === 'VIDEO' || mediaAsset.mimeType.toLowerCase().startsWith('video/')
+          ? 'REELS'
+          : 'IMAGE';
+      return { url, mediaType };
+    }
+
+    return null;
   }
 }

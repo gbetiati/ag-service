@@ -4,7 +4,7 @@ import { CreateSocialCredentialUseCase } from '../../application/create-social-c
 import { CreatePublicationUseCase } from '../../application/create-publication.use-case.js';
 import { ApproveContentUseCase } from '../../application/approve-content.use-case.js';
 import { RejectContentUseCase } from '../../application/reject-content.use-case.js';
-import { PublishContentUseCase } from '../../application/publish-content.use-case.js';
+import { QueueImmediatePublicationUseCase } from '../../application/queue-immediate-publication.use-case.js';
 import { GetSocialAccountsUseCase } from '../../application/get-social-accounts.use-case.js';
 import { CreateSocialAccountDto } from '../dto/create-social-account.dto.js';
 import { CreateSocialCredentialDto } from '../dto/create-social-credential.dto.js';
@@ -21,7 +21,7 @@ export class PublicationController {
     private readonly createPublicationUseCase: CreatePublicationUseCase,
     private readonly approveContentUseCase: ApproveContentUseCase,
     private readonly rejectContentUseCase: RejectContentUseCase,
-    private readonly publishContentUseCase: PublishContentUseCase,
+    private readonly queueImmediatePublicationUseCase: QueueImmediatePublicationUseCase,
   ) {}
 
   @Post('social-accounts')
@@ -84,6 +84,6 @@ export class PublicationController {
     @Param('contentId') contentId: string,
     @Body() body: PublishContentDto,
   ) {
-    return this.publishContentUseCase.execute({ companyId, contentId, socialAccountId: body.socialAccountId });
+    return this.queueImmediatePublicationUseCase.execute({ companyId, contentId, socialAccountId: body.socialAccountId });
   }
 }

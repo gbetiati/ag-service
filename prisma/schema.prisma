@@ -13,6 +13,11 @@ enum CompanyStatus {
   SUSPENDED
 }
 
+enum ApprovalMode {
+  MANUAL
+  AUTOMATIC
+}
+
 enum CompanyMemberRole {
   OWNER
   ADMIN
@@ -123,14 +128,22 @@ enum VideoAssetStatus {
   FAILED
 }
 
+enum VideoGenerationStatus {
+  QUEUED
+  RENDERING
+  READY
+  FAILED
+}
+
 model Company {
-  id          String        @id @default(uuid())
-  name        String
-  slug        String        @unique
-  description String?
-  status      CompanyStatus @default(ACTIVE)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id           String        @id @default(uuid())
+  name         String
+  slug         String        @unique
+  description  String?
+  status       CompanyStatus @default(ACTIVE)
+  approvalMode ApprovalMode  @default(MANUAL)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   brands            Brand[]
   brandRules        BrandRule[]
@@ -139,6 +152,7 @@ model Company {
   mediaAssets       MediaAsset[]
   contents          Content[]
   videoAssets       VideoAsset[]
+  videoGenerations  VideoGeneration[]
   validations       ContentValidation[]
   socialAccounts    SocialAccount[]
   socialCredentials SocialCredential[]
@@ -503,13 +517,14 @@ model Content {
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
 
-  scenes          ContentScene[]
-  assets          ContentAsset[]
-  history         ContentHistory[]
-  videoAssets     VideoAsset[]
-  validations     ContentValidation[]
-  publications    Publication[]
-  calendarEntries ContentCalendar[]
+  scenes           ContentScene[]
+  assets           ContentAsset[]
+  history          ContentHistory[]
+  videoAssets      VideoAsset[]
+  videoGenerations VideoGeneration[]
+  validations      ContentValidation[]
+  publications     Publication[]
+  calendarEntries  ContentCalendar[]
 
   @@unique([companyId, slug])
   @@index([companyId, status])
@@ -577,10 +592,32 @@ model VideoAsset {
   updatedAt       DateTime         @updatedAt
 
   validations ContentValidation[]
+  generation  VideoGeneration?
 
   @@index([companyId, contentId])
   @@index([status])
   @@map("video_assets")
+}
+
+model VideoGeneration {
+  id           String                @id @default(uuid())
+  companyId    String
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contentId    String
+  content      Content               @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  provider     String
+  status       VideoGenerationStatus @default(QUEUED)
+  renderJobId  String?
+  videoAssetId String?               @unique
+  videoAsset   VideoAsset?           @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
+  request      Json
+  errorMessage String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([companyId, status])
+  @@index([contentId, createdAt])
+  @@map("video_generations")
 }
 
 model ContentValidation {

@@ -58,8 +58,12 @@ export class PrismaSocialCredentialRepository extends SocialCredentialRepository
   }
 
   async findActiveBySocialAccount(socialAccountId: string): Promise<SocialCredential | null> {
+    const now = new Date();
     const records = await this.prisma.socialCredential.findMany({
-      where: { socialAccountId },
+      where: {
+        socialAccountId,
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       orderBy: { createdAt: 'desc' },
       take: 1,
     });
