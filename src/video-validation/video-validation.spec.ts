@@ -31,10 +31,9 @@ describe('video validation use cases', () => {
       create: vi.fn(async (validation: ContentValidation) => validation),
       update: vi.fn(async (validation: ContentValidation) => validation),
       findById: vi.fn(),
-      findByContent: vi.fn().mockResolvedValue([]),
+      findByContent: vi.fn(),
       findLatestByContent: vi.fn(),
       createResult: vi.fn(async (result: ValidationResult) => result),
-      deleteResults: vi.fn(),
       findResults: vi.fn().mockResolvedValue([]),
     };
 

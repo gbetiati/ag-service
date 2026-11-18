@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { GenerateVideoUseCase } from '../../application/generate-video.use-case.js';
 import { GetVideoGenerationStatusUseCase } from '../../application/get-video-generation-status.use-case.js';
-import { GetVideoGenerationDetailsUseCase } from '../../application/get-video-generation-details.use-case.js';
 import { RenderVideoUseCase } from '../../application/render-video.use-case.js';
 import { GenerateVideoDto } from '../dto/generate-video.dto.js';
 
@@ -11,7 +10,6 @@ export class VideoGenerationController {
     private readonly generateVideoUseCase: GenerateVideoUseCase,
     private readonly renderVideoUseCase: RenderVideoUseCase,
     private readonly getVideoGenerationStatusUseCase: GetVideoGenerationStatusUseCase,
-    private readonly getVideoGenerationDetailsUseCase: GetVideoGenerationDetailsUseCase,
   ) {}
 
   @Post()
@@ -34,17 +32,8 @@ export class VideoGenerationController {
     return this.renderVideoUseCase.execute({ companyId, videoAssetId });
   }
 
-  @Get(':videoGenerationId/status')
-  status(
-    @Param('companyId') companyId: string,
-    @Param('contentId') contentId: string,
-    @Param('videoGenerationId') videoGenerationId: string,
-  ) {
-    return this.getVideoGenerationDetailsUseCase.execute({ companyId, contentId, videoGenerationId });
-  }
-
-  @Get('assets/:videoAssetId/status')
-  statusByAsset(@Param('companyId') companyId: string, @Param('videoAssetId') videoAssetId: string) {
+  @Get(':videoAssetId/status')
+  async status(@Param('companyId') companyId: string, @Param('videoAssetId') videoAssetId: string) {
     return this.getVideoGenerationStatusUseCase.execute({ companyId, videoAssetId });
   }
 }

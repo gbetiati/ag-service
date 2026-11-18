@@ -49,44 +49,17 @@ export class ValidateVideoUseCase {
     if (!videoAsset || videoAsset.companyId !== input.companyId || videoAsset.contentId !== input.contentId) {
       throw new NotFoundException('Video asset not found for this content');
     }
-    if (videoAsset.status !== 'READY' || !videoAsset.storageKey) {
-      throw new NotFoundException('Video asset must be ready and stored before validation');
-    }
 
-    const existingValidation = (await this.validationRepository.findByContent(input.contentId)).find(
-      (validation) => validation.videoAssetId === input.videoAssetId,
-    );
-    const now = new Date();
-    const processingValidation = existingValidation
-      ? new ContentValidation(
-          existingValidation.id,
-          input.companyId,
-          input.contentId,
-          input.videoAssetId,
-          'PROCESSING',
-          'video-validation-v1',
-          null,
-          null,
-          now,
-          null,
-          existingValidation.createdAt,
-          now,
-        )
-      : ContentValidation.create({
-          companyId: input.companyId,
-          contentId: input.contentId,
-          videoAssetId: input.videoAssetId,
-          status: 'PROCESSING',
-          validatorVersion: 'video-validation-v1',
-          startedAt: now,
-        });
+    const pendingValidation = ContentValidation.create({
+      companyId: input.companyId,
+      contentId: input.contentId,
+      videoAssetId: input.videoAssetId,
+      status: 'PROCESSING',
+      validatorVersion: 'video-validation-v1',
+      startedAt: new Date(),
+    });
 
-    if (existingValidation) {
-      await this.validationRepository.deleteResults(existingValidation.id);
-    }
-    const persistedValidation = existingValidation
-      ? await this.validationRepository.update(processingValidation)
-      : await this.validationRepository.create(processingValidation);
+    const persistedValidation = await this.validationRepository.create(pendingValidation);
 
     try {
       const storageInfo = await this.videoProcessingService.downloadVideo(videoAsset.storageKey ?? '');

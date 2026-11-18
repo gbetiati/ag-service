@@ -1,7 +1,8 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { VideoGeneration } from '../domain/video-generation.entity.js';
-import { VideoGenerationRepository } from '../domain/video-generation.repository.interface.js';
-import { VideoGenerationQueue } from '../domain/video-generation-queue.interface.js';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { VideoAsset } from '../domain/video-asset.entity.js';
+import { VideoAssetRepository } from '../domain/video-asset.repository.interface.js';
+import { VideoProvider } from '../domain/video-provider.interface.js';
+import { StorageProvider } from '../../storage/domain/storage-provider.interface.js';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
 
 export type GenerateVideoInput = {
@@ -16,47 +17,61 @@ export type GenerateVideoInput = {
 export class GenerateVideoUseCase {
   constructor(
     private readonly contentRepository: ContentRepository,
-    private readonly videoGenerationRepository: VideoGenerationRepository,
-    private readonly videoGenerationQueue: VideoGenerationQueue,
+    private readonly videoAssetRepository: VideoAssetRepository,
+    private readonly videoProvider: VideoProvider,
+    private readonly storageProvider: StorageProvider,
   ) {}
 
-  async execute(input: GenerateVideoInput): Promise<VideoGeneration> {
+  async execute(input: GenerateVideoInput): Promise<VideoAsset> {
     const content = await this.contentRepository.findById(input.contentId);
     if (!content || content.companyId !== input.companyId) {
       throw new NotFoundException('Content not found in company');
     }
-    if (content.status === 'PUBLISHED') {
-      throw new ConflictException('Published content cannot be sent through video generation again.');
+
+    const renderResult = await this.videoProvider.createRenderJob({
+      companyId: input.companyId,
+      contentId: content.id,
+      title: content.title,
+      script: content.script,
+      brandId: content.brandId,
+      productId: content.productId,
+      sourceMediaAssetIds: input.sourceMediaAssetIds ?? [],
+      outputFormat: input.outputFormat ?? 'mp4',
+    });
+
+    let uploadedKey: string | null = null;
+    let mimeType: string | null = null;
+    let sizeBytes: number | null = null;
+
+    if (renderResult.finalUrl) {
+      const finalBuffer = await this.videoProvider.fetchFinalVideo(renderResult.renderJobId);
+      const upload = await this.storageProvider.upload({
+        buffer: finalBuffer,
+        originalName: `${content.slug}.mp4`,
+        mimeType: 'video/mp4',
+        directory: 'videos',
+      });
+      uploadedKey = upload.key;
+      mimeType = upload.mimeType;
+      sizeBytes = upload.sizeBytes;
     }
-    if (content.status === 'APPROVED') {
-      content.status = 'DRAFT';
-      await this.contentRepository.update(content);
-    }
-    //etapa 1
-    const generation = VideoGeneration.create({
+
+    const asset = VideoAsset.create({
       companyId: input.companyId,
       contentId: content.id,
       provider: input.provider ?? 'CREATOMATE',
-      request: {
+      status: renderResult.status === 'FAILED' ? 'FAILED' : renderResult.status === 'READY' ? 'READY' : 'QUEUED',
+      renderJobId: renderResult.renderJobId,
+      storageKey: uploadedKey,
+      mimeType: mimeType ?? 'video/mp4',
+      sizeBytes,
+      metadata: {
+        ...renderResult.metadata,
         sourceMediaAssetIds: input.sourceMediaAssetIds ?? [],
-        outputFormat: input.outputFormat ?? 'mp4',
       },
+      errorMessage: renderResult.errorMessage ?? null,
     });
 
-    const createdGeneration = await this.videoGenerationRepository.create(generation);
-
-    try {
-      await this.videoGenerationQueue.enqueue({
-        companyId: input.companyId,
-        videoGenerationId: createdGeneration.id,
-      });
-    } catch (error) {
-      createdGeneration.status = 'FAILED';
-      createdGeneration.errorMessage = error instanceof Error ? error.message : 'Unable to enqueue video generation';
-      await this.videoGenerationRepository.update(createdGeneration);
-      throw error;
-    }
-
-    return createdGeneration;
+    return this.videoAssetRepository.create(asset);
   }
 }

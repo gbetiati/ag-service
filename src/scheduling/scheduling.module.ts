@@ -6,25 +6,28 @@ import { ProcessScheduledContentUseCase } from './application/process-scheduled-
 import { ResumeAutomationUseCase } from './application/resume-automation.use-case.js';
 import { SchedulePublicationUseCase } from './application/schedule-publication.use-case.js';
 import { AutomationStateRepository } from './domain/automation-state.repository.interface.js';
-import { BullBoardModule } from './infra/bull-board/bull-board.module.js';
+import { SchedulingQueueService } from './domain/queue.service.interface.js';
 import { SchedulingController } from './infra/controllers/scheduling.controller.js';
 import { PrismaAutomationStateRepository } from './infra/repositories/prisma-automation-state.repository.js';
-import { SocialPublishingProcessor } from './infra/processors/social-publishing.processor.js';
+import { BullMqQueueService } from './infra/services/bullmq-queue.service.js';
 
 @Module({
-  imports: [PrismaModule, PublicationModule, BullBoardModule],
+  imports: [PrismaModule, PublicationModule],
   controllers: [SchedulingController],
   providers: [
     SchedulePublicationUseCase,
     ProcessScheduledContentUseCase,
     PauseAutomationUseCase,
     ResumeAutomationUseCase,
-    SocialPublishingProcessor,
     {
       provide: AutomationStateRepository,
       useClass: PrismaAutomationStateRepository,
     },
+    {
+      provide: SchedulingQueueService,
+      useClass: BullMqQueueService,
+    },
   ],
-  exports: [AutomationStateRepository, BullBoardModule],
+  exports: [AutomationStateRepository, SchedulingQueueService],
 })
 export class SchedulingModule {}

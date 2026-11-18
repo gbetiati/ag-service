@@ -15,7 +15,6 @@ export class PrismaCompanyRepository implements CompanyRepository {
         slug: company.slug,
         description: company.description,
         status: company.status,
-        approvalMode: company.approvalMode,
       },
     });
 
@@ -27,18 +26,7 @@ export class PrismaCompanyRepository implements CompanyRepository {
       created.status as Company['status'],
       created.createdAt,
       created.updatedAt,
-      created.approvalMode,
     );
-  }
-
-  async update(company: Company): Promise<Company> {
-    const updated = await this.prisma.company.update({
-      where: { id: company.id },
-      data: {
-        approvalMode: company.approvalMode,
-      },
-    });
-    return this.toEntity(updated);
   }
 
   async findById(id: string): Promise<Company | null> {
@@ -70,7 +58,6 @@ export class PrismaCompanyRepository implements CompanyRepository {
     slug: string;
     description: string | null;
     status: string;
-    approvalMode: string;
     createdAt: Date;
     updatedAt: Date;
   }): Company {
@@ -82,7 +69,6 @@ export class PrismaCompanyRepository implements CompanyRepository {
       record.status as Company['status'],
       record.createdAt,
       record.updatedAt,
-      record.approvalMode as Company['approvalMode'],
     );
   }
 }

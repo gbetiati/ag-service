@@ -98,10 +98,6 @@ export class PrismaContentValidationRepository extends ContentValidationReposito
     return records.map((record) => this.mapResult(record));
   }
 
-  async deleteResults(validationId: string): Promise<void> {
-    await this.prisma.validationResult.deleteMany({ where: { validationId } });
-  }
-
   private mapEntity(record: {
     id: string;
     companyId: string;

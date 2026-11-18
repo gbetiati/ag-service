@@ -1,9 +1,9 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Queue, type JobsOptions } from 'bullmq';
 import { QueueName, SchedulingQueueService } from '../../domain/queue.service.interface.js';
 
 @Injectable()
-export class BullMqQueueService extends SchedulingQueueService implements OnModuleDestroy {
+export class BullMqQueueService extends SchedulingQueueService {
   private readonly connection = {
     host: process.env.REDIS_HOST ?? 'localhost',
     port: Number(process.env.REDIS_PORT ?? 6379),
@@ -12,11 +12,6 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
   };
 
   private readonly queues = new Map<string, Queue>();
-
-  async onModuleDestroy(): Promise<void> {
-    await Promise.all([...this.queues.values()].map((queue) => queue.close()));
-    this.queues.clear();
-  }
 
   private getQueue(queueName: QueueName): Queue {
     const queue = this.queues.get(queueName);
@@ -47,34 +42,16 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
     attempts?: number;
   }): Promise<{ queueName: QueueName; jobId: string; status: 'scheduled' }> {
     const queue = this.getQueue(input.queueName);
-
-    const sanitizedJobId = input.jobId ? input.jobId.replace(/:/g, '_') : undefined;
-    console.log('sanitizedJobId', sanitizedJobId)
-    if (sanitizedJobId) {
-      const existing = await queue.getJob(sanitizedJobId);
-      if (existing) {
-        const state = await existing.getState();
-        if (state === 'active') {
-          throw new Error(`Cannot replace active BullMQ job ${sanitizedJobId}.`);
-        }
-        await existing.remove();
-      }
-    }
-
     const options: JobsOptions = {
       delay: input.delayMs ?? 0,
       attempts: input.attempts ?? 3,
-      jobId: sanitizedJobId,
+      jobId: input.jobId ?? undefined,
       removeOnComplete: true,
       removeOnFail: false,
     };
 
     const job = await queue.add(input.jobName, input.data, options);
-    return {
-      queueName: input.queueName,
-      jobId: job.id ?? sanitizedJobId ?? crypto.randomUUID(),
-      status: 'scheduled',
-    };
+    return { queueName: input.queueName, jobId: job.id ?? input.jobId ?? crypto.randomUUID(), status: 'scheduled' };
   }
 
   async pause(queueName: QueueName, _reason?: string): Promise<void> {

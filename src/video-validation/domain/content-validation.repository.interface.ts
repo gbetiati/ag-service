@@ -7,6 +7,5 @@ export abstract class ContentValidationRepository {
   abstract findByContent(contentId: string): Promise<ContentValidation[]>;
   abstract findLatestByContent(contentId: string): Promise<ContentValidation | null>;
   abstract createResult(result: ValidationResult): Promise<ValidationResult>;
-  abstract deleteResults(validationId: string): Promise<void>;
   abstract findResults(validationId: string): Promise<ValidationResult[]>;
 }

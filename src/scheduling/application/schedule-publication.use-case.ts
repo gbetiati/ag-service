@@ -1,6 +1,5 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PublicationRepository } from '../../publication/domain/publication.repository.interface.js';
-import { PublicationGateService } from '../../publication/domain/publication-gate.service.interface.js';
 import { AutomationStateRepository } from '../domain/automation-state.repository.interface.js';
 import { SchedulingQueueService } from '../domain/queue.service.interface.js';
 
@@ -17,7 +16,6 @@ export class SchedulePublicationUseCase {
     private readonly publicationRepository: PublicationRepository,
     private readonly automationStateRepository: AutomationStateRepository,
     private readonly schedulingQueueService: SchedulingQueueService,
-    private readonly publicationGateService: PublicationGateService,
   ) {}
 
   async execute(input: SchedulePublicationInput): Promise<{ id: string; status: string; scheduledFor: Date }> {
@@ -27,19 +25,6 @@ export class SchedulePublicationUseCase {
     }
 
     const queueName = input.queueName ?? 'social-publishing';
-    if (queueName !== 'social-publishing') {
-      throw new BadRequestException('Publication schedules must use the social-publishing queue.');
-    }
-
-    const gate = await this.publicationGateService.authorize({
-      companyId: input.companyId,
-      contentId: publication.contentId,
-      socialAccountId: publication.socialAccountId,
-    });
-    if (!gate.allowed) {
-      throw new ForbiddenException(gate.reasons.join('; '));
-    }
-
     const automationState = await this.automationStateRepository.findByCompanyAndQueue(input.companyId, queueName);
     if (automationState?.paused) {
       throw new ForbiddenException(automationState.reason ?? 'Automation is paused for this queue.');
@@ -53,24 +38,20 @@ export class SchedulePublicationUseCase {
     publication.scheduledFor = scheduledFor;
     await this.publicationRepository.update(publication);
 
-    const jobId = `publication-${publication.id}`;
-    try {
-      await this.schedulingQueueService.schedule({
-        queueName,
-        jobName: 'publish-content',
-        data: {
-          companyId: input.companyId,
-          publicationId: publication.id,
-        },
-        delayMs,
-        jobId,
-        attempts: 3,
-      });
-    } catch (error) {
-      publication.fail(error instanceof Error ? error.message : 'Unable to queue scheduled publication');
-      await this.publicationRepository.update(publication);
-      throw error;
-    }
+    const jobId = `publication:${publication.id}`;
+    await this.schedulingQueueService.schedule({
+      queueName,
+      jobName: 'publish-content',
+      data: {
+        companyId: input.companyId,
+        publicationId: publication.id,
+        contentId: publication.contentId,
+        socialAccountId: publication.socialAccountId,
+      },
+      delayMs,
+      jobId,
+      attempts: 3,
+    });
 
     return {
       id: publication.id,

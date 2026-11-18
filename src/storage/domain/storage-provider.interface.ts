@@ -1,10 +1,9 @@
-import { Readable } from 'node:stream';
-
 export type StorageUploadPayload = {
+  buffer: Buffer;
   originalName: string;
   mimeType: string;
   directory: string;
-} & ({ buffer: Buffer; stream?: never } | { stream: Readable; buffer?: never });
+};
 
 export type StorageUploadResult = {
   key: string;

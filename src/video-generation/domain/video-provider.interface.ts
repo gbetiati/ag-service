@@ -1,5 +1,3 @@
-import { Readable } from 'node:stream';
-
 export type VideoGenerationStatus = 'QUEUED' | 'RENDERING' | 'READY' | 'FAILED';
 
 export type VideoGenerationRequest = {
@@ -10,7 +8,6 @@ export type VideoGenerationRequest = {
   brandId?: string | null;
   productId?: string | null;
   sourceMediaAssetIds?: string[];
-  sourceMediaUrls?: string[];
   outputFormat?: string;
 };
 
@@ -23,9 +20,7 @@ export type VideoGenerationResult = {
 };
 
 export abstract class VideoProvider {
-  abstract createRenderJob(
-    request: VideoGenerationRequest,
-  ): Promise<VideoGenerationResult>;
+  abstract createRenderJob(request: VideoGenerationRequest): Promise<VideoGenerationResult>;
   abstract getRenderStatus(jobId: string): Promise<VideoGenerationResult>;
-  abstract fetchFinalVideo(jobId: string): Promise<Readable>;
+  abstract fetchFinalVideo(jobId: string): Promise<Buffer>;
 }

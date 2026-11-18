@@ -1,9 +1,8 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
 import { Publication } from '../domain/publication.entity.js';
 import { PublicationRepository } from '../domain/publication.repository.interface.js';
 import { SocialAccountRepository } from '../domain/social-account.repository.interface.js';
-import { PublicationGateService } from '../domain/publication-gate.service.interface.js';
 
 export type CreatePublicationInput = {
   companyId: string;
@@ -19,7 +18,6 @@ export class CreatePublicationUseCase {
     private readonly contentRepository: ContentRepository,
     private readonly socialAccountRepository: SocialAccountRepository,
     private readonly publicationRepository: PublicationRepository,
-    private readonly publicationGateService: PublicationGateService,
   ) {}
 
   async execute(input: CreatePublicationInput): Promise<Publication> {
@@ -27,19 +25,10 @@ export class CreatePublicationUseCase {
     if (!content || content.companyId !== input.companyId) {
       throw new NotFoundException('Content not found for this company.');
     }
-    //conta conectada
+
     const account = await this.socialAccountRepository.findById(input.socialAccountId);
     if (!account || account.companyId !== input.companyId) {
       throw new NotFoundException('Social account not found for this company.');
-    }
-    //gate pass
-    const gate = await this.publicationGateService.authorize({
-      companyId: input.companyId,
-      contentId: input.contentId,
-      socialAccountId: input.socialAccountId,
-    });
-    if (!gate.allowed) {
-      throw new ForbiddenException(gate.reasons.join('; '));
     }
 
     const existing = await this.publicationRepository.findLatestByContentAndAccount(input.contentId, input.socialAccountId);
@@ -48,18 +37,14 @@ export class CreatePublicationUseCase {
     }
 
     const publication = Publication.create({
-      id: existing?.id,
       companyId: input.companyId,
       contentId: input.contentId,
       socialAccountId: input.socialAccountId,
       provider: input.provider ?? account.platform,
       scheduledFor: input.scheduledFor ?? null,
       status: 'QUEUED',
-      createdAt: existing?.createdAt,
     });
 
-    return existing
-      ? this.publicationRepository.update(publication)
-      : this.publicationRepository.create(publication);
+    return this.publicationRepository.create(publication);
   }
 }
