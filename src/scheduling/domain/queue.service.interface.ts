@@ -15,10 +15,13 @@ export type QueueScheduleInput = {
   delayMs?: number;
   jobId?: string;
   attempts?: number;
+  deduplicate?: boolean;
+  removeOnFail?: boolean;
 };
 
 export abstract class SchedulingQueueService {
   abstract schedule(input: QueueScheduleInput): Promise<{ queueName: QueueName; jobId: string; status: 'scheduled' }>;
+  abstract getJobState(queueName: QueueName, jobId: string): Promise<string>;
   abstract pause(queueName: QueueName, reason?: string): Promise<void>;
   abstract resume(queueName: QueueName): Promise<void>;
   abstract getQueueStatus(queueName: QueueName): Promise<{ queueName: QueueName; paused: boolean; waiting: number; active: number; delayed: number }>;

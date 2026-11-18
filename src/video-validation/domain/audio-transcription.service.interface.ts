@@ -1,7 +1,7 @@
 export type AudioTranscript = {
   transcript: string;
   confidence: number;
-  source: 'ffmpeg' | 'unavailable';
+  source: 'ffmpeg' | 'unavailable' | 'no-audio' | 'transcription';
 };
 
 export abstract class AudioTranscriptionService {

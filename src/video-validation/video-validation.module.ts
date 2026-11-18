@@ -30,8 +30,11 @@ import { ValidationAggregatorServiceImpl } from './infra/services/validation-agg
 import { VideoValidationController } from './infra/controllers/video-validation.controller.js';
 import { VideoValidationProcessor } from './infra/processors/video-validation.processor.js';
 
+import { ScheduledPublicationPersistenceModule } from '../scheduling/infra/scheduled-publication-persistence.module.js';
+
 @Module({
-  imports: [PrismaModule, StorageModule, ContentModule, ProductsModule, VideoGenerationModule, CompaniesModule],
+  imports: [
+    ScheduledPublicationPersistenceModule,PrismaModule, StorageModule, ContentModule, ProductsModule, VideoGenerationModule, CompaniesModule],
   controllers: [VideoValidationController],
   providers: [
     ValidateVideoUseCase,

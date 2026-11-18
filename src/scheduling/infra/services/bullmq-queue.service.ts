@@ -1,14 +1,17 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Queue, type JobsOptions } from 'bullmq';
 import { QueueName, SchedulingQueueService } from '../../domain/queue.service.interface.js';
 
 @Injectable()
 export class BullMqQueueService extends SchedulingQueueService implements OnModuleDestroy {
+  private readonly logger = new Logger(BullMqQueueService.name);
   private readonly connection = {
     host: process.env.REDIS_HOST ?? 'localhost',
     port: Number(process.env.REDIS_PORT ?? 6379),
     username: process.env.REDIS_USERNAME ?? undefined,
     password: process.env.REDIS_PASSWORD ?? undefined,
+    maxRetriesPerRequest: 1,
+    enableOfflineQueue: false,
   };
 
   private readonly queues = new Map<string, Queue>();
@@ -34,6 +37,7 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
       },
     });
 
+    created.on('error', (error) => this.logger.warn(`Queue ${queueName}: ${error.message}`));
     this.queues.set(queueName, created);
     return created;
   }
@@ -45,12 +49,15 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
     delayMs?: number;
     jobId?: string;
     attempts?: number;
+    deduplicate?: boolean;
+    removeOnFail?: boolean;
   }): Promise<{ queueName: QueueName; jobId: string; status: 'scheduled' }> {
     const queue = this.getQueue(input.queueName);
+    if (input.deduplicate) await this.waitForConnection(queue);
 
     const sanitizedJobId = input.jobId ? input.jobId.replace(/:/g, '_') : undefined;
     console.log('sanitizedJobId', sanitizedJobId)
-    if (sanitizedJobId) {
+    if (sanitizedJobId && !input.deduplicate) {
       const existing = await queue.getJob(sanitizedJobId);
       if (existing) {
         const state = await existing.getState();
@@ -64,9 +71,10 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
     const options: JobsOptions = {
       delay: input.delayMs ?? 0,
       attempts: input.attempts ?? 3,
+      backoff: { type: 'exponential', delay: 5_000 },
       jobId: sanitizedJobId,
       removeOnComplete: true,
-      removeOnFail: false,
+      removeOnFail: input.removeOnFail ?? false,
     };
 
     const job = await queue.add(input.jobName, input.data, options);
@@ -75,6 +83,26 @@ export class BullMqQueueService extends SchedulingQueueService implements OnModu
       jobId: job.id ?? sanitizedJobId ?? crypto.randomUUID(),
       status: 'scheduled',
     };
+  }
+
+  private async waitForConnection(queue: Queue): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        queue.waitUntilReady(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Redis queue is unavailable.')), 1_500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async getJobState(queueName: QueueName, jobId: string): Promise<string> {
+    const queue = this.getQueue(queueName);
+    await this.waitForConnection(queue);
+    return queue.getJobState(jobId);
   }
 
   async pause(queueName: QueueName, _reason?: string): Promise<void> {

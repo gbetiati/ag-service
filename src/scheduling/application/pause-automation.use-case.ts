@@ -25,7 +25,9 @@ export class PauseAutomationUseCase {
 
     state.pause(input.reason);
     await this.automationStateRepository.update(state);
-    await this.schedulingQueueService.pause(input.queueName, input.reason);
+    if (input.queueName === 'notifications') {
+      await this.schedulingQueueService.pause(input.queueName, input.reason);
+    }
 
     return {
       companyId: state.companyId,

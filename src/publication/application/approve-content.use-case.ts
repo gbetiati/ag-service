@@ -1,7 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
 import { ContentValidationRepository } from '../../video-validation/domain/content-validation.repository.interface.js';
 import { VideoAssetRepository } from '../../video-generation/domain/video-asset.repository.interface.js';
+
+import { ScheduledPublicationRepository } from '../../scheduling/domain/scheduled-publication.repository.js';
 
 @Injectable()
 export class ApproveContentUseCase {
@@ -10,12 +12,17 @@ export class ApproveContentUseCase {
     // Kept for TEMP bypass — re-enable validation checks below before production.
     private readonly _contentValidationRepository: ContentValidationRepository,
     private readonly _videoAssetRepository: VideoAssetRepository,
+    @Optional() private readonly schedules?: ScheduledPublicationRepository,
   ) {}
 
-  async execute(input: { companyId: string; contentId: string }): Promise<{ id: string; status: string }> {
+  async execute(input: { companyId: string; contentId: string; scheduleId?: string }): Promise<{ id: string; status: string }> {
     const content = await this.contentRepository.findById(input.contentId);
     if (!content || content.companyId !== input.companyId) {
       throw new NotFoundException('Content not found for this company.');
+    }
+
+    if (await this.schedules?.approve(input)) {
+      return { id: content.id, status: 'APPROVED' };
     }
 
     // TEMP: bypass video validation before approval for end-to-end publish testing.

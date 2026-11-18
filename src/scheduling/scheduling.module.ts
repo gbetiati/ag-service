@@ -11,8 +11,14 @@ import { SchedulingController } from './infra/controllers/scheduling.controller.
 import { PrismaAutomationStateRepository } from './infra/repositories/prisma-automation-state.repository.js';
 import { SocialPublishingProcessor } from './infra/processors/social-publishing.processor.js';
 
+import { ContentStrategyModule } from '../content-strategy/content-strategy.module.js';
+import { ScheduledPublicationPersistenceModule } from './infra/scheduled-publication-persistence.module.js';
+import { ScheduledPublicationQueue } from './application/scheduled-publication-queue.service.js';
+import { RunScheduledPublicationUseCase } from './application/run-scheduled-publication.use-case.js';
+import { ScheduledPublicationProcessor } from './infra/processors/scheduled-publication.processor.js';
+
 @Module({
-  imports: [PrismaModule, PublicationModule, BullBoardModule],
+  imports: [PrismaModule, PublicationModule, BullBoardModule, ContentStrategyModule, ScheduledPublicationPersistenceModule],
   controllers: [SchedulingController],
   providers: [
     SchedulePublicationUseCase,
@@ -20,6 +26,9 @@ import { SocialPublishingProcessor } from './infra/processors/social-publishing.
     PauseAutomationUseCase,
     ResumeAutomationUseCase,
     SocialPublishingProcessor,
+    ScheduledPublicationQueue,
+    RunScheduledPublicationUseCase,
+    ScheduledPublicationProcessor,
     {
       provide: AutomationStateRepository,
       useClass: PrismaAutomationStateRepository,

@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { PauseAutomationUseCase } from '../../application/pause-automation.use-case.js';
 import { ProcessScheduledContentUseCase } from '../../application/process-scheduled-content.use-case.js';
 import { ResumeAutomationUseCase } from '../../application/resume-automation.use-case.js';
@@ -29,6 +29,11 @@ export class SchedulingController {
       scheduledFor: new Date(body.scheduledFor),
       queueName: body.queueName,
     });
+  }
+
+  @Get('publications/:publicationId/schedule')
+  async getSchedule(@Param('companyId') companyId: string, @Param('publicationId') publicationId: string) {
+    return this.schedulePublicationUseCase.get(companyId, publicationId);
   }
 
   @Post('publications/:publicationId/process')

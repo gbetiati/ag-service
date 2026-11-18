@@ -27,6 +27,38 @@ export class PrismaVideoGenerationRepository extends VideoGenerationRepository {
     return this.toEntity(record);
   }
 
+  async isScheduledRenderAllowed(id: string, companyId: string): Promise<boolean> {
+    const record = await this.prisma.videoGeneration.findFirst({
+      where: this.scheduledRenderScope(id, companyId),
+      select: { id: true },
+    });
+    return !!record;
+  }
+
+  async claimScheduledSubmission(id: string, companyId: string): Promise<boolean> {
+    const changed = await this.prisma.videoGeneration.updateMany({
+      where: { ...this.scheduledRenderScope(id, companyId), status: 'QUEUED', renderJobId: null },
+      data: { status: 'RENDERING', errorMessage: null },
+    });
+    return changed.count === 1;
+  }
+
+  private scheduledRenderScope(id: string, companyId: string): Prisma.VideoGenerationWhereInput {
+    return {
+      id, companyId,
+      scheduledPublication: {
+        id, companyId, stage: 'RENDER',
+        content: { companyId, status: { notIn: ['REJECTED', 'ARCHIVED', 'PUBLISHED'] } },
+        publication: {
+          companyId, status: 'SCHEDULED', socialAccount: { companyId },
+          company: { status: 'ACTIVE', automationStates: {
+            none: { queueName: { in: ['video-generation', 'social-publishing'] }, paused: true },
+          } },
+        },
+      },
+    };
+  }
+
   async update(generation: VideoGeneration): Promise<VideoGeneration> {
     const record = await this.prisma.videoGeneration.update({
       where: { id: generation.id },

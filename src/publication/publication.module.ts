@@ -35,8 +35,10 @@ import { MetaGraphInstagramOAuthProvider } from './infra/providers/meta-graph-in
 import { SchedulingQueueService } from '../scheduling/domain/queue.service.interface.js';
 import { BullMqQueueService } from '../scheduling/infra/services/bullmq-queue.service.js';
 
+import { ScheduledPublicationPersistenceModule } from '../scheduling/infra/scheduled-publication-persistence.module.js';
+
 @Module({
-  imports: [PrismaModule, ContentModule, MediaModule, VideoValidationModule, VideoGenerationModule],
+  imports: [PrismaModule, ContentModule, MediaModule, VideoValidationModule, VideoGenerationModule, ScheduledPublicationPersistenceModule],
   controllers: [PublicationController, InstagramOAuthController],
   providers: [
     CreateSocialAccountUseCase,

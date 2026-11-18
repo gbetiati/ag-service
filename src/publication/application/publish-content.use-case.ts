@@ -17,6 +17,8 @@ export type PublishContentInput = {
   companyId: string;
   contentId: string;
   socialAccountId: string;
+  scheduleId?: string;
+  videoAssetId?: string;
 };
 
 @Injectable()
@@ -55,6 +57,7 @@ export class PublishContentUseCase {
       companyId: input.companyId,
       contentId: input.contentId,
       socialAccountId: input.socialAccountId,
+      ...(input.scheduleId ? { scheduleId: input.scheduleId, videoAssetId: input.videoAssetId } : {}),
     });
 
     if (!gate.allowed) {
@@ -76,7 +79,14 @@ export class PublishContentUseCase {
       throw new NotFoundException('No active credential found for this social account.');
     }
 
-    const media = await this.resolvePublishMedia(input.contentId);
+    const media = await this.resolvePublishMedia(input.contentId, input.videoAssetId);
+    if (input.scheduleId) {
+      if (!media?.url.startsWith('https://') || credential.companyId !== input.companyId) {
+        throw new UnauthorizedException('The scheduled video or account credential is unavailable.');
+      }
+      const decision = await this.publicationGateService.authorize(input);
+      if (!decision.allowed) throw new UnauthorizedException(decision.reasons.join(' | '));
+    }
     const result = await this.socialPublisher.publish({
       companyId: input.companyId,
       contentId: input.contentId,
@@ -89,6 +99,9 @@ export class PublishContentUseCase {
     });
 
     publication.markPublished(result.externalPostId, result.metadata ?? null);
+    if (input.scheduleId) {
+      return this.publicationRepository.completeScheduled(publication, input.scheduleId);
+    }
     publication = await this.publicationRepository.update(publication);
 
     const previousAttempts = await this.publicationAttemptRepository.findByPublication(publication.id);
@@ -111,10 +124,11 @@ export class PublishContentUseCase {
 
   private async resolvePublishMedia(
     contentId: string,
+    requiredVideoId?: string,
   ): Promise<{ url: string; mediaType: SocialPublishMediaType } | null> {
     const videoAssets = await this.videoAssetRepository.findByContent(contentId);
     const readyVideo = videoAssets
-      .filter((asset) => asset.status === 'READY')
+      .filter((asset) => asset.status === 'READY' && (!requiredVideoId || asset.id === requiredVideoId))
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0];
 
     const videoUrl =
@@ -124,6 +138,8 @@ export class PublishContentUseCase {
     if (videoUrl) {
       return { url: videoUrl, mediaType: 'REELS' };
     }
+
+    if (requiredVideoId) return null;
 
     const contentAssets = await this.contentAssetRepository.findByContent(contentId);
     for (const contentAsset of contentAssets) {

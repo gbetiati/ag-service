@@ -1,81 +1,51 @@
-import { Injectable, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { PublicationRepository } from '../../publication/domain/publication.repository.interface.js';
-import { PublicationGateService } from '../../publication/domain/publication-gate.service.interface.js';
-import { AutomationStateRepository } from '../domain/automation-state.repository.interface.js';
-import { SchedulingQueueService } from '../domain/queue.service.interface.js';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { QueueName } from '../domain/queue.service.interface.js';
+import { ScheduledPublicationRepository, ScheduledRun } from '../domain/scheduled-publication.repository.js';
+import { ScheduledPublicationQueue } from './scheduled-publication-queue.service.js';
 
 export type SchedulePublicationInput = {
   companyId: string;
   publicationId: string;
   scheduledFor: Date;
-  queueName?: 'content-planning' | 'video-generation' | 'video-validation' | 'social-publishing' | 'notifications';
+  queueName?: QueueName;
 };
 
 @Injectable()
 export class SchedulePublicationUseCase {
   constructor(
-    private readonly publicationRepository: PublicationRepository,
-    private readonly automationStateRepository: AutomationStateRepository,
-    private readonly schedulingQueueService: SchedulingQueueService,
-    private readonly publicationGateService: PublicationGateService,
+    private readonly schedules: ScheduledPublicationRepository,
+    private readonly queue: ScheduledPublicationQueue,
   ) {}
 
-  async execute(input: SchedulePublicationInput): Promise<{ id: string; status: string; scheduledFor: Date }> {
-    const publication = await this.publicationRepository.findById(input.publicationId);
-    if (!publication || publication.companyId !== input.companyId) {
-      throw new NotFoundException('Publication not found for this company.');
+  async execute(input: SchedulePublicationInput) {
+    if (input.queueName && input.queueName !== 'social-publishing') {
+      throw new BadRequestException('Publication schedules must target the social-publishing queue.');
     }
-
-    const queueName = input.queueName ?? 'social-publishing';
-    if (queueName !== 'social-publishing') {
-      throw new BadRequestException('Publication schedules must use the social-publishing queue.');
+    if (!Number.isFinite(input.scheduledFor.getTime())) {
+      throw new BadRequestException('A valid publication time is required.');
     }
+    const run = await this.schedules.schedule(input);
+    await this.queue.enqueue(run);
+    return this.details(run);
+  }
 
-    const gate = await this.publicationGateService.authorize({
-      companyId: input.companyId,
-      contentId: publication.contentId,
-      socialAccountId: publication.socialAccountId,
-    });
-    if (!gate.allowed) {
-      throw new ForbiddenException(gate.reasons.join('; '));
-    }
+  async get(companyId: string, publicationId: string) {
+    const run = await this.schedules.findByPublication(companyId, publicationId);
+    if (!run) throw new NotFoundException('Scheduled preparation not found for this company.');
+    return this.details(run);
+  }
 
-    const automationState = await this.automationStateRepository.findByCompanyAndQueue(input.companyId, queueName);
-    if (automationState?.paused) {
-      throw new ForbiddenException(automationState.reason ?? 'Automation is paused for this queue.');
-    }
-
-    const scheduledFor = new Date(input.scheduledFor);
-    const now = Date.now();
-    const delayMs = Math.max(0, scheduledFor.getTime() - now);
-
-    publication.status = scheduledFor.getTime() <= now ? 'QUEUED' : 'SCHEDULED';
-    publication.scheduledFor = scheduledFor;
-    await this.publicationRepository.update(publication);
-
-    const jobId = `publication-${publication.id}`;
-    try {
-      await this.schedulingQueueService.schedule({
-        queueName,
-        jobName: 'publish-content',
-        data: {
-          companyId: input.companyId,
-          publicationId: publication.id,
-        },
-        delayMs,
-        jobId,
-        attempts: 3,
-      });
-    } catch (error) {
-      publication.fail(error instanceof Error ? error.message : 'Unable to queue scheduled publication');
-      await this.publicationRepository.update(publication);
-      throw error;
-    }
-
+  private details(run: ScheduledRun) {
     return {
-      id: publication.id,
-      status: publication.status,
-      scheduledFor,
+      id: run.publicationId,
+      scheduleId: run.id,
+      status: run.stage === 'PUBLISHED' ? 'PUBLISHED' : ['FAILED', 'RECONCILIATION_REQUIRED'].includes(run.stage) ? 'FAILED' : 'SCHEDULED',
+      scheduledFor: run.scheduledFor,
+      nextRunAt: run.nextRunAt,
+      stage: run.stage,
+      contentIdeaId: run.contentIdeaId,
+      videoAssetId: run.generation?.asset?.id ?? null,
+      errorMessage: run.errorMessage,
     };
   }
 }

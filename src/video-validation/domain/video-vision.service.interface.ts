@@ -1,5 +1,6 @@
 export type VisionAnalysisResult = {
   summary: string;
+  source?: 'multimodal';
   issues: string[];
   confidence: number;
   detectedObjects: string[];

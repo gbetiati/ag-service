@@ -15,6 +15,7 @@ export type StorageUploadResult = {
 
 export abstract class StorageProvider {
   abstract upload(payload: StorageUploadPayload): Promise<StorageUploadResult>;
+  openReadStream?(key: string): Readable;
   abstract download(key: string): Promise<Buffer>;
   abstract delete(key: string): Promise<void>;
 }

@@ -15,6 +15,7 @@ export class Publication {
     public errorMessage: string | null,
     public readonly createdAt: Date,
     public readonly updatedAt: Date,
+    public readonly scheduleId: string | null = null,
   ) {}
 
   static create(input: {

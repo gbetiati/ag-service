@@ -63,8 +63,12 @@ export class PublicationController {
 
   @Post('content/:contentId/approve')
   @Roles('OWNER', 'ADMIN')
-  async approveContent(@Param('companyId') companyId: string, @Param('contentId') contentId: string) {
-    return this.approveContentUseCase.execute({ companyId, contentId });
+  async approveContent(
+    @Param('companyId') companyId: string,
+    @Param('contentId') contentId: string,
+    @Body() body?: { scheduleId?: string },
+  ) {
+    return this.approveContentUseCase.execute({ companyId, contentId, scheduleId: body?.scheduleId });
   }
 
   @Post('content/:contentId/reject')

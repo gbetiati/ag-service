@@ -22,6 +22,12 @@ export type VideoGenerationResult = {
   metadata?: Record<string, unknown>;
 };
 
+export class VideoRenderRequestError extends Error {
+  constructor(message: string, readonly retryable = false) {
+    super(message);
+  }
+}
+
 export abstract class VideoProvider {
   abstract createRenderJob(
     request: VideoGenerationRequest,

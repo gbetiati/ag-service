@@ -1,4 +1,7 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
 import { VideoAssetRepository } from '../../video-generation/domain/video-asset.repository.interface.js';
 import { StorageProvider } from '../../storage/domain/storage-provider.interface.js';
@@ -19,10 +22,13 @@ export type ValidateVideoInput = {
   companyId: string;
   contentId: string;
   videoAssetId: string;
+  requireRealEvidence?: boolean;
 };
 
 @Injectable()
 export class ValidateVideoUseCase {
+  private readonly logger = new Logger(ValidateVideoUseCase.name);
+
   constructor(
     private readonly contentRepository: ContentRepository,
     private readonly videoAssetRepository: VideoAssetRepository,
@@ -88,12 +94,15 @@ export class ValidateVideoUseCase {
       ? await this.validationRepository.update(processingValidation)
       : await this.validationRepository.create(processingValidation);
 
+    let cleanupVideo: (() => Promise<void>) | undefined;
+    let frameDir: string | undefined;
     try {
       const storageInfo = await this.videoProcessingService.downloadVideo(videoAsset.storageKey ?? '');
+      cleanupVideo = storageInfo.cleanup;
       const integrity = await this.videoProcessingService.validateVideoIntegrity(storageInfo.path);
       const technicalMetadata = await this.videoProcessingService.collectTechnicalMetadata(storageInfo.path);
 
-      const frameDir = `/tmp/validation-${Date.now()}`;
+      frameDir = await mkdtemp(join(tmpdir(), 'ag-validation-'));
       const frames = await this.frameExtractionService.extractRepresentativeFrames(storageInfo.path, frameDir);
       const ocr = await this.ocrService.runOcr(frames);
       const vision = await this.videoVisionService.analyzeFrames(frames);
@@ -132,7 +141,12 @@ export class ValidateVideoUseCase {
         policy,
       });
 
-      const resultStatus: ValidationStatus = aggregated.status;
+      const visionPassed = vision.confidence > 0.5 && (!input.requireRealEvidence || vision.source === 'multimodal');
+      const audioPassed = transcript.source === 'no-audio'
+        || (transcript.confidence > 0.1 && (!input.requireRealEvidence || transcript.source === 'transcription'));
+      const missingEvidence = input.requireRealEvidence
+        && (!visionPassed || !audioPassed || ocr.source !== 'tesseract');
+      const resultStatus: ValidationStatus = aggregated.status === 'APPROVED' && missingEvidence ? 'INCONCLUSIVE' : aggregated.status;
       const finalValidation = new ContentValidation(
         persistedValidation.id,
         persistedValidation.companyId,
@@ -140,8 +154,13 @@ export class ValidateVideoUseCase {
         persistedValidation.videoAssetId,
         resultStatus,
         persistedValidation.validatorVersion,
-        aggregated.summary,
-        aggregated.failureReason ?? null,
+        missingEvidence ? 'The scheduled video is missing required validation evidence.' : aggregated.summary,
+        [
+          aggregated.failureReason,
+          ...(missingEvidence && !visionPassed ? ['Real multimodal evidence is unavailable.'] : []),
+          ...(missingEvidence && !audioPassed ? ['Audio transcription is unavailable or the audio stream could not be verified.'] : []),
+          ...(missingEvidence && ocr.source !== 'tesseract' ? ['OCR evidence is unavailable.'] : []),
+        ].filter(Boolean).join(' ') || null,
         persistedValidation.startedAt,
         new Date(),
         persistedValidation.createdAt,
@@ -151,8 +170,8 @@ export class ValidateVideoUseCase {
       const results = [
         new ValidationResult(crypto.randomUUID(), finalValidation.id, 'integrity', integrity.isValid ? 'APPROVED' : 'FAILED', integrity.isValid, integrity.isValid ? 1 : 0, { reason: integrity.reason ?? 'Valid' }, { technicalMetadata }, new Date()),
         new ValidationResult(crypto.randomUUID(), finalValidation.id, 'ocr', ocr.detectedText.length > 0 ? 'APPROVED' : 'INCONCLUSIVE', ocr.detectedText.length > 0, Number((ocr.confidence ?? 0).toFixed(2)), { text: ocr.detectedText }, { source: ocr.source }, new Date()),
-        new ValidationResult(crypto.randomUUID(), finalValidation.id, 'vision', vision.confidence > 0.5 ? 'APPROVED' : 'INCONCLUSIVE', vision.confidence > 0.5, Number(vision.confidence.toFixed(2)), { issues: vision.issues }, { detectedObjects: vision.detectedObjects }, new Date()),
-        new ValidationResult(crypto.randomUUID(), finalValidation.id, 'audio', transcript.confidence > 0.1 ? 'APPROVED' : 'INCONCLUSIVE', transcript.confidence > 0.1, Number(transcript.confidence.toFixed(2)), { transcript }, { source: transcript.source }, new Date()),
+        new ValidationResult(crypto.randomUUID(), finalValidation.id, 'vision', visionPassed ? 'APPROVED' : 'INCONCLUSIVE', visionPassed, Number(vision.confidence.toFixed(2)), { issues: vision.issues }, { detectedObjects: vision.detectedObjects, ...(vision.source ? { source: vision.source } : {}) }, new Date()),
+        new ValidationResult(crypto.randomUUID(), finalValidation.id, 'audio', audioPassed ? 'APPROVED' : 'INCONCLUSIVE', audioPassed, Number(transcript.confidence.toFixed(2)), { transcript }, { source: transcript.source }, new Date()),
         new ValidationResult(crypto.randomUUID(), finalValidation.id, 'product', productVerification.passed ? 'APPROVED' : 'REJECTED', productVerification.passed, productVerification.matchedProducts.length > 0 ? 1 : 0, { summary: productVerification.summary }, { matchedProducts: productVerification.matchedProducts, missingProducts: productVerification.missingProducts }, new Date()),
         new ValidationResult(crypto.randomUUID(), finalValidation.id, 'policy', policy.passed ? 'APPROVED' : 'REJECTED', policy.passed, policy.passed ? 1 : 0, { summary: policy.summary }, { violations: policy.violations }, new Date()),
       ];
@@ -180,6 +199,14 @@ export class ValidateVideoUseCase {
       );
       await this.validationRepository.update(failedValidation);
       throw new Error(reason);
+    } finally {
+      const cleanup = await Promise.allSettled([
+        cleanupVideo?.(),
+        frameDir ? rm(frameDir, { recursive: true, force: true }) : undefined,
+      ]);
+      if (cleanup.some((result) => result.status === 'rejected')) {
+        this.logger.warn(`Could not remove all temporary files for validation ${persistedValidation.id}.`);
+      }
     }
   }
 }

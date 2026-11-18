@@ -5,6 +5,7 @@ import {
   VideoGenerationRequest,
   VideoGenerationResult,
   VideoProvider,
+  VideoRenderRequestError,
 } from '../../domain/video-provider.interface.js';
 
 const API_URL = 'https://api.creatomate.com/v1';
@@ -99,7 +100,7 @@ export class CreatomateProvider extends VideoProvider {
       imageUrls.length === 0 ||
       imageUrls.some((url) => new URL(url).protocol !== 'https:')
     ) {
-      throw new Error(
+      throw new VideoRenderRequestError(
         'Creatomate requires at least one publicly reachable HTTPS product image.',
       );
     }
@@ -167,7 +168,7 @@ export class CreatomateProvider extends VideoProvider {
   private async requestJson(path: string, init: RequestInit): Promise<unknown> {
     const apiKey = this.configService.get<string>('CREATOMATE_API_KEY');
     if (!apiKey) {
-      throw new Error('CREATOMATE_API_KEY is not configured.');
+      throw new VideoRenderRequestError('CREATOMATE_API_KEY is not configured.');
     }
 
     const headers = new Headers(init.headers);
@@ -180,9 +181,11 @@ export class CreatomateProvider extends VideoProvider {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
-      throw new Error(
-        `Creatomate API request failed (HTTP ${response.status}).`,
-      );
+      const message = `Creatomate API request failed (HTTP ${response.status}).`;
+      if (response.status >= 400 && response.status < 500 && response.status !== 408) {
+        throw new VideoRenderRequestError(message, response.status === 429);
+      }
+      throw new Error(message);
     }
 
     try {

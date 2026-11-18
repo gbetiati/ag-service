@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ContentRepository } from '../../content/domain/content.repository.interface.js';
+import { SCHEDULED_BROWNIE_IMAGE_URL, contentRevision } from '../../scheduling/domain/scheduled-publication.repository.js';
 import { MediaAssetRepository } from '../../media/domain/media-asset.repository.interface.js';
 import { MediaAssetUrlProvider } from '../../media/domain/media-asset-url-provider.interface.js';
 import { StorageProvider } from '../../storage/domain/storage-provider.interface.js';
@@ -38,6 +39,10 @@ export class ProcessVideoGenerationUseCase {
     if (!generation || generation.companyId !== input.companyId) {
       throw new NotFoundException('Video generation not found in company');
     }
+    const scheduledRevision = generation.request.scheduledRevision;
+    if (typeof scheduledRevision === 'string'
+      && !await this.videoGenerationRepository.isScheduledRenderAllowed(generation.id, input.companyId)) return generation;
+
     if (generation.status === 'READY' && generation.videoAssetId) {
       return generation;
     }
@@ -56,23 +61,47 @@ export class ProcessVideoGenerationUseCase {
       throw new NotFoundException('Content not found in company');
     }
 
-    generation.status = 'RENDERING';
-    generation.errorMessage = null;
-    await this.videoGenerationRepository.update(generation);
+    if (typeof scheduledRevision === 'string') {
+      if (contentRevision(content) !== scheduledRevision) {
+        throw new BadRequestException('Content no longer matches the scheduled render revision.');
+      }
+      if (generation.status === 'FAILED') return generation;
+      if (generation.status === 'RENDERING' && !generation.renderJobId) {
+        if (Date.now() - generation.updatedAt.getTime() < 90_000) return generation;
+        generation.status = 'FAILED';
+        generation.errorMessage = 'Render submission outcome is unknown; reconcile Creatomate before rescheduling.'
+          + (generation.errorMessage ? ` ${generation.errorMessage}` : '');
+        return this.videoGenerationRepository.update(generation);
+      }
+    } else {
+      generation.status = 'RENDERING';
+      generation.errorMessage = null;
+      await this.videoGenerationRepository.update(generation);
+    }
 
+    const useBrownieImage = typeof scheduledRevision === 'string' && generation.request.useBrownieImage === true;
     let sourceMediaAssets: Awaited<
       ReturnType<ProcessVideoGenerationUseCase['getSourceMediaAssets']>
     > = [];
     if (!generation.renderJobId) {
-      sourceMediaAssets = await this.getSourceMediaAssets(
-        generation,
-        content.productId,
-        input.companyId,
-      );
+      if (!useBrownieImage) {
+        sourceMediaAssets = await this.getSourceMediaAssets(
+          generation,
+          content.productId,
+          input.companyId,
+        );
+      }
       generation.request.sourceMediaAssetIds = sourceMediaAssets.map(
         (asset) => asset.id,
       );
-      await this.videoGenerationRepository.update(generation);
+      if (typeof scheduledRevision === 'string') {
+        if (!await this.videoGenerationRepository.claimScheduledSubmission(generation.id, generation.companyId)) {
+          return generation;
+        }
+        generation.status = 'RENDERING';
+      } else {
+        await this.videoGenerationRepository.update(generation);
+      }
     }
 
     let renderResult: VideoGenerationResult;
@@ -89,9 +118,9 @@ export class ProcessVideoGenerationUseCase {
         brandId: content.brandId,
         productId: content.productId,
         sourceMediaAssetIds: this.getSourceMediaAssetIds(generation.request),
-        sourceMediaUrls: sourceMediaAssets.map((asset) =>
-          this.mediaAssetUrlProvider.createUrl(asset),
-        ),
+        sourceMediaUrls: useBrownieImage
+          ? [SCHEDULED_BROWNIE_IMAGE_URL]
+          : sourceMediaAssets.map((asset) => this.mediaAssetUrlProvider.createUrl(asset)),
         outputFormat: this.getOutputFormat(generation.request),
       });
     }

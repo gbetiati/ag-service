@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import {
   StorageProvider,
@@ -57,6 +57,11 @@ export class LocalStorageProvider implements StorageProvider {
       mimeType: payload.mimeType,
       sizeBytes: stats.size,
     };
+  }
+
+  openReadStream(key: string) {
+    const root = path.resolve(process.cwd(), process.env.STORAGE_ROOT ?? './storage/uploads');
+    return createReadStream(path.join(root, key));
   }
 
   async download(key: string): Promise<Buffer> {

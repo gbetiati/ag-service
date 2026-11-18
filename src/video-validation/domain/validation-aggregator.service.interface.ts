@@ -1,10 +1,12 @@
+import type { AudioTranscript } from './audio-transcription.service.interface.js';
+
 import { ValidationStatus } from './validation-status.type.js';
 
 export type ValidationAggregateInput = {
   integrity: { isValid: boolean; reason?: string; technicalMetadata?: Record<string, unknown> };
   ocr: { detectedText: string[]; confidence: number; source: 'tesseract' | 'unavailable' };
   vision: { summary: string; issues: string[]; confidence: number; detectedObjects: string[] };
-  transcript: { transcript: string; confidence: number; source: 'ffmpeg' | 'unavailable' };
+  transcript: AudioTranscript;
   productVerification: { passed: boolean; matchedProducts: string[]; missingProducts: string[]; summary: string };
   policy: { passed: boolean; violations: string[]; summary: string };
 };

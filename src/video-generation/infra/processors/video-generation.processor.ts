@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Job, Queue, Worker } from 'bullmq';
+import { VideoRenderRequestError } from '../../domain/video-provider.interface.js';
 import { VideoGenerationRepository } from '../../domain/video-generation.repository.interface.js';
 import { VideoGenerationJobData, VideoGenerationQueue } from '../../domain/video-generation-queue.interface.js';
 import { ProcessVideoGenerationUseCase } from '../../application/process-video-generation.use-case.js';
@@ -57,18 +58,19 @@ export class VideoGenerationProcessor implements OnModuleInit, OnModuleDestroy {
   private async processJob(job: Job<VideoGenerationJobData>): Promise<void> {
     try {
       const asset = await this.processVideoGeneration.execute(job.data);
+      if (typeof asset.request.scheduledRevision === 'string') return;
       if (asset.status === 'READY' && asset.videoAssetId) {
-        await this.validationQueue.add(
-          'validate-video',
-          { videoAssetId: asset.videoAssetId },
-          {
-            jobId: `validate-${asset.videoAssetId}`,
-            attempts: 3,
-            backoff: { type: 'exponential', delay: 5000 },
-            removeOnComplete: true,
-            removeOnFail: false,
-          },
-        );
+        // await this.validationQueue.add(
+          // 'validate-video',
+          // { videoAssetId: asset.videoAssetId },
+          // {
+            // jobId: `validate-${asset.videoAssetId}`,
+            // attempts: 3,
+            // backoff: { type: 'exponential', delay: 5000 },
+            // removeOnComplete: true,
+            // removeOnFail: false,
+          // },
+        // );
         return;
       }
 
@@ -93,9 +95,22 @@ export class VideoGenerationProcessor implements OnModuleInit, OnModuleDestroy {
       if (generation && generation.companyId === job.data.companyId) {
         const maxAttempts = job.opts.attempts ?? 1;
         const finalAttempt = job.attemptsMade + 1 >= maxAttempts;
-        if (finalAttempt) {
+        const scheduled = typeof generation.request.scheduledRevision === 'string';
+        if (scheduled && generation.status === 'RENDERING' && !generation.renderJobId
+          && error instanceof VideoRenderRequestError) {
+          generation.status = error.retryable && !finalAttempt ? 'QUEUED' : 'FAILED';
+          generation.errorMessage = error.message;
+          await this.videoGenerationRepository.update(generation);
+          throw error;
+        }
+        if (scheduled && generation.status === 'RENDERING' && !generation.renderJobId) {
+          generation.errorMessage = error instanceof Error ? error.message : 'Video generation failed';
+          await this.videoGenerationRepository.update(generation);
+          return;
+        }
+        if (finalAttempt || generation.status === 'FAILED') {
           generation.status = 'FAILED';
-        } else if (generation.status !== 'READY') {
+        } else if (!scheduled && generation.status !== 'READY') {
           generation.status = 'QUEUED';
         }
         generation.errorMessage = error instanceof Error ? error.message : 'Video generation failed';

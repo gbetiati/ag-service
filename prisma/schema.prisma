@@ -451,6 +451,8 @@ model ContentIdea {
   createdAt      DateTime                     @default(now())
   updatedAt      DateTime                     @updatedAt
 
+  scheduledPublications ScheduledPublication[]
+
   @@index([companyId, status])
   @@index([companyId, pillarId])
   @@map("content_ideas")
@@ -525,6 +527,7 @@ model Content {
   validations      ContentValidation[]
   publications     Publication[]
   calendarEntries  ContentCalendar[]
+  scheduledPublications ScheduledPublication[]
 
   @@unique([companyId, slug])
   @@index([companyId, status])
@@ -616,6 +619,8 @@ model VideoGeneration {
   updatedAt    DateTime              @updatedAt
 
   @@index([companyId, status])
+  scheduledPublication ScheduledPublication?
+
   @@index([contentId, createdAt])
   @@map("video_generations")
 }
@@ -700,6 +705,7 @@ model Publication {
   updatedAt       DateTime          @updatedAt
 
   attempts PublicationAttempt[]
+  preparation ScheduledPublication?
 
   @@unique([contentId, socialAccountId])
   @@index([companyId, status])
@@ -748,4 +754,42 @@ model ValidationResult {
 
   @@index([validationId, checkName])
   @@map("validation_results")
+}
+
+enum ScheduledPublicationStage {
+  PREPARE
+  RENDER
+  VALIDATE
+  APPROVAL
+  PUBLISH
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  RECONCILIATION_REQUIRED
+}
+
+model ScheduledPublication {
+  id             String                    @id @default(uuid())
+  companyId      String
+  contentId      String
+  content        Content                   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  publicationId  String                    @unique
+  publication    Publication               @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  stage          ScheduledPublicationStage @default(PREPARE)
+  nextRunAt      DateTime?
+  leaseUntil     DateTime?
+  attempts       Int                       @default(0)
+  contentIdeaId  String?
+  contentIdea    ContentIdea?              @relation(fields: [contentIdeaId], references: [id], onDelete: SetNull)
+  generationId   String?                   @unique
+  generation     VideoGeneration?          @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  revision       String?
+  approvedAt     DateTime?
+  errorMessage   String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@index([nextRunAt])
+  @@index([companyId, contentId])
+  @@map("scheduled_publications")
 }

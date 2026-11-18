@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { execFile } from 'node:child_process';
-import { promises as fs } from 'node:fs';
+import { createWriteStream, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { StorageProvider } from '../../../storage/domain/storage-provider.interface.js';
 import { VideoIntegrityReport, VideoProcessingService } from '../../domain/video-processing.service.interface.js';
@@ -15,13 +16,22 @@ export class FfmpegVideoProcessingService extends VideoProcessingService {
     super();
   }
 
-  async downloadVideo(storageKey: string): Promise<{ path: string; sizeBytes: number; mimeType?: string }> {
-    const buffer = await this.storageProvider.download(storageKey);
+  async downloadVideo(storageKey: string): Promise<{ path: string; sizeBytes: number; mimeType?: string; cleanup: () => Promise<void> }> {
     const tempDir = await fs.mkdtemp(path.join(tmpdir(), 'ag-video-'));
     const target = path.join(tempDir, path.basename(storageKey) || 'video.mp4');
-    await fs.writeFile(target, buffer);
-
-    return { path: target, sizeBytes: buffer.length, mimeType: 'video/mp4' };
+    const cleanup = () => fs.rm(tempDir, { recursive: true, force: true });
+    try {
+      const stream = this.storageProvider.openReadStream?.(storageKey);
+      if (stream) {
+        await pipeline(stream, createWriteStream(target));
+      } else {
+        await fs.writeFile(target, await this.storageProvider.download(storageKey));
+      }
+      return { path: target, sizeBytes: (await fs.stat(target)).size, mimeType: 'video/mp4', cleanup };
+    } catch (error) {
+      await cleanup();
+      throw error;
+    }
   }
 
   async validateVideoIntegrity(path: string): Promise<VideoIntegrityReport> {

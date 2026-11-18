@@ -22,7 +22,9 @@ export class ResumeAutomationUseCase {
 
     state.resume();
     await this.automationStateRepository.update(state);
-    await this.schedulingQueueService.resume(input.queueName);
+    if (input.queueName === 'notifications') {
+      await this.schedulingQueueService.resume(input.queueName);
+    }
 
     return {
       companyId: state.companyId,

@@ -35,6 +35,9 @@ export class QueueImmediatePublicationUseCase {
     if (publication?.status === 'PUBLISHED') {
       return publication;
     }
+    if (publication?.scheduleId) {
+      throw new ConflictException('This publication is managed by scheduled preparation.');
+    }
     if (publication && publication?.status === 'SCHEDULED' && publication?.scheduledFor && publication?.scheduledFor > new Date()) {
       throw new ConflictException('This publication already has a future schedule; update or cancel that schedule first.');
     }

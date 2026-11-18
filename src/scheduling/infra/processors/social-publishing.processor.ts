@@ -1,14 +1,20 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Job, Worker } from 'bullmq';
+import { DelayedError, Job, Worker } from 'bullmq';
 import { PublicationAttempt } from '../../../publication/domain/publication-attempt.entity.js';
 import { PublicationAttemptRepository } from '../../../publication/domain/publication-attempt.repository.interface.js';
 import { PublicationRepository } from '../../../publication/domain/publication.repository.interface.js';
 import { PublishContentUseCase } from '../../../publication/application/publish-content.use-case.js';
+import { RunScheduledPublicationUseCase } from '../../application/run-scheduled-publication.use-case.js';
+import { AutomationStateRepository } from '../../domain/automation-state.repository.interface.js';
+import { ScheduleJob } from '../../domain/scheduled-publication.repository.js';
 
-type SocialPublishingJobData = {
+type LegacySocialPublishingJob = {
   companyId: string;
   publicationId: string;
 };
+
+
+type SocialPublishingJobData = LegacySocialPublishingJob | ScheduleJob;
 
 @Injectable()
 export class SocialPublishingProcessor implements OnModuleInit, OnModuleDestroy {
@@ -19,12 +25,14 @@ export class SocialPublishingProcessor implements OnModuleInit, OnModuleDestroy 
     private readonly publicationRepository: PublicationRepository,
     private readonly publicationAttemptRepository: PublicationAttemptRepository,
     private readonly publishContent: PublishContentUseCase,
+    private readonly automation: AutomationStateRepository,
+    private readonly runSchedule: RunScheduledPublicationUseCase,
   ) {}
 
   onModuleInit(): void {
     this.worker = new Worker<SocialPublishingJobData>(
       'social-publishing',
-      (job) => this.processJob(job),
+      (job, token) => this.processJob(job, token),
       {
         connection: {
           host: process.env.REDIS_HOST ?? 'localhost',
@@ -45,13 +53,18 @@ export class SocialPublishingProcessor implements OnModuleInit, OnModuleDestroy 
     await this.worker?.close();
   }
 
-  private async processJob(job: Job<SocialPublishingJobData>): Promise<void> {
+  private async processJob(job: Job<SocialPublishingJobData>, token?: string): Promise<void> {
     const data = job.data;
+    if (job.name === 'prepare-scheduled-publication' && 'dueAt' in data) {
+      await this.runSchedule.execute(data);
+      return;
+    }
+    if (!('publicationId' in data)) return;
     const publication = await this.publicationRepository.findById(data.publicationId);
     if (!publication || publication.companyId !== data.companyId) {
       throw new Error('Scheduled publication not found for this company.');
     }
-    if (publication.status === 'PUBLISHED') {
+    if (publication.scheduleId || publication.status === 'PUBLISHED') {
       return;
     }
     if (!['QUEUED', 'SCHEDULED'].includes(publication.status)) {
@@ -59,6 +72,12 @@ export class SocialPublishingProcessor implements OnModuleInit, OnModuleDestroy 
     }
     if (publication.scheduledFor && publication.scheduledFor.getTime() > Date.now()) {
       return;
+    }
+
+    const pause = await this.automation.findByCompanyAndQueue(data.companyId, 'social-publishing');
+    if (pause?.paused) {
+      await job.moveToDelayed(Date.now() + 30_000, token);
+      throw new DelayedError();
     }
 
     try {
@@ -69,7 +88,7 @@ export class SocialPublishingProcessor implements OnModuleInit, OnModuleDestroy 
       });
     } catch (error) {
       const persistedPublication = await this.publicationRepository.findById(publication.id);
-      if (persistedPublication?.status === 'PUBLISHED') {
+      if (persistedPublication?.scheduleId || persistedPublication?.status === 'PUBLISHED') {
         return;
       }
 

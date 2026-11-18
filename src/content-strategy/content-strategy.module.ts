@@ -20,10 +20,16 @@ import { PrismaContentPillarRepository } from './infra/repositories/prisma-conte
 import { PrismaContentPlanRepository } from './infra/repositories/prisma-content-plan.repository.js';
 import { LocalContentStrategyAiService } from './infra/services/local-content-strategy-ai.service.js';
 
+import { ContentStrategy } from './application/content-strategy.service.js';
+import { ScheduledContentAi } from './domain/scheduled-content-ai.interface.js';
+import { OpenAiScheduledContentService } from './infra/services/openai-scheduled-content.service.js';
+
 @Module({
   imports: [PrismaModule, CompaniesModule, BrandsModule, ProductsModule],
   controllers: [ContentStrategyController],
   providers: [
+    ContentStrategy,
+    { provide: ScheduledContentAi, useClass: OpenAiScheduledContentService },
     CreateContentPillarUseCase,
     GenerateContentIdeasUseCase,
     SelectProductsForContentUseCase,
@@ -51,6 +57,7 @@ import { LocalContentStrategyAiService } from './infra/services/local-content-st
     },
   ],
   exports: [
+    ContentStrategy,
     ContentPillarRepository,
     ContentIdeaRepository,
     ContentPlanRepository,

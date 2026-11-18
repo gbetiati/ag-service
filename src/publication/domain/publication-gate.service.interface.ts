@@ -3,10 +3,15 @@ export type PublicationGateDecision = {
   reasons: string[];
 };
 
+export type PublicationGateInput = {
+  companyId: string;
+  contentId: string;
+  socialAccountId: string;
+  scheduleId?: string;
+  videoAssetId?: string;
+  checkSchedule?: boolean;
+};
+
 export abstract class PublicationGateService {
-  abstract authorize(input: {
-    companyId: string;
-    contentId: string;
-    socialAccountId: string;
-  }): Promise<PublicationGateDecision>;
+  abstract authorize(input: PublicationGateInput): Promise<PublicationGateDecision>;
 }

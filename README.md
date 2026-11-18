@@ -48,3 +48,50 @@ When a video asset reaches `READY` with a storage key, generation enqueues valid
 Create a publication only after approval and validation. Schedule it with `POST /companies/:companyId/scheduling/publications/:publicationId/schedule`; the PostgreSQL row is updated before BullMQ receives a delayed job. `POST /companies/:companyId/content/:contentId/publish` queues an immediate publication rather than calling the social provider in the HTTP request. The `social-publishing` worker rechecks persisted state and the publication gate before invoking the publisher. Configure optional worker concurrency with `VIDEO_VALIDATION_CONCURRENCY` and `SOCIAL_PUBLISHING_CONCURRENCY`.
 
 The orchestration does not make every external integration production-ready by itself: `InstagramPublisher` still uses mock/example media behavior unless a real publishing integration is completed.
+
+## Scheduled editorial preparation
+
+Supply `scheduledFor` when creating a publication for an existing content item, or send
+`POST /companies/:companyId/scheduling/publications/:publicationId/schedule` with
+`{"scheduledFor":"2026-11-20T18:00:00-03:00"}`. The date lives in
+`Publication.scheduledFor`. The linked preparation tracks the stage, lease, idea,
+render and last blocker. One active preparation can own a content item at a time.
+Existing schedules without a preparation keep their original processing path.
+
+The `content-planning` worker starts preparation three minutes before the requested
+time, or as soon as it can if that time has passed. Configure
+`SCHEDULED_CONTENT_OPENAI_API_KEY` and `SCHEDULED_CONTENT_OPENAI_MODEL` with a model
+that supports Chat Completions JSON mode. Editorial generation uses the brand's
+eligible catalog, its recent content and a fixed pillar per company. A theme needs a
+generic image attached to the existing content. Preparation stores the new idea and
+updates the existing content in one transaction. The generation and validation queues
+then process the linked render and video. PostgreSQL is polled every five seconds
+for due stages whose BullMQ job may be missing.
+
+Inspect the stage, blocker, `scheduleId`, `contentIdeaId` and `videoAssetId` with
+`GET /companies/:companyId/scheduling/publications/:publicationId/schedule`.
+With manual approval, submit `{"scheduleId":"<current-schedule-id>"}` to
+`POST /companies/:companyId/content/:contentId/approve` after the linked video passes
+validation. The social worker rechecks the exact video, the editorial revision, the
+company's approval mode and pause state, and the social account credentials before
+publishing. Rescheduling generates a new ID and invalidates jobs for the previous ID.
+
+Three minutes is the preparation lead time. A late render, validation or manual
+approval can delay publication, and the pending stage remains visible. A missing
+manual approval or blocked account has no automatic expiry. Rendering has a
+one-hour limit, and validation has a two-hour budget measured from render creation.
+An uncertain render submission or Instagram delivery requires reconciliation
+before another attempt. A process restart or lost Redis job can recover pending
+stages without treating an uncertain external action as safe to repeat.
+
+The restored backend's visual validator returns placeholder results, and the local
+storage provider returns a `file://` URL. For scheduled publishing, the former
+cannot satisfy the multimodal check and Instagram needs the stored video's public
+HTTPS URL. LLM, Creatomate and Instagram calls require working credentials and
+reachable media to verify end-to-end publication.
+
+Run the scheduling integration tests with
+`npm run test:e2e -- test/scheduled-publication.e2e-spec.ts`, setting
+`SCHEDULING_TEST_DATABASE_URL`, `REDIS_HOST` and `REDIS_PORT` to isolated services.
+Apply the Prisma migrations on the test database first. The tests use PostgreSQL
+and Redis while substituting external AI and publishing responses.

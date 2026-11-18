@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ContentRepository } from '../../../content/domain/content.repository.interface.js';
 import { ContentValidationRepository } from '../../../video-validation/domain/content-validation.repository.interface.js';
-import { PublicationGateService, PublicationGateDecision } from '../../domain/publication-gate.service.interface.js';
+import { PublicationGateService, PublicationGateDecision, PublicationGateInput } from '../../domain/publication-gate.service.interface.js';
 import { SocialAccountRepository } from '../../domain/social-account.repository.interface.js';
 import { SocialCredentialRepository } from '../../domain/social-credential.repository.interface.js';
 import { PublicationRepository } from '../../domain/publication.repository.interface.js';
 import { VideoAssetRepository } from '../../../video-generation/domain/video-asset.repository.interface.js';
+
+import { ScheduledPublicationRepository, scheduledVideoPassed } from '../../../scheduling/domain/scheduled-publication.repository.js';
 
 @Injectable()
 export class PublicationGateServiceImpl extends PublicationGateService {
@@ -18,11 +20,12 @@ export class PublicationGateServiceImpl extends PublicationGateService {
     // Kept for TEMP bypass — re-enable validation checks in authorize() before production.
     private readonly _contentValidationRepository: ContentValidationRepository,
     private readonly _videoAssetRepository: VideoAssetRepository,
+    @Optional() private readonly schedules?: ScheduledPublicationRepository,
   ) {
     super();
   }
 
-  async authorize(input: { companyId: string; contentId: string; socialAccountId: string }): Promise<PublicationGateDecision> {
+  async authorize(input: PublicationGateInput): Promise<PublicationGateDecision> {
     const reasons: string[] = [];
 
     const content = await this.contentRepository.findById(input.contentId);
@@ -35,6 +38,24 @@ export class PublicationGateServiceImpl extends PublicationGateService {
     if (!socialAccount || socialAccount.companyId !== input.companyId) {
       reasons.push('Social account not found for this company.');
       return { allowed: false, reasons };
+    }
+
+    if (this.schedules) {
+      const publication = await this._publicationRepository.findLatestByContentAndAccount(input.contentId, input.socialAccountId);
+      if (input.scheduleId) {
+        const run = await this.schedules.find({ id: input.scheduleId, companyId: input.companyId });
+        const requiredStages = input.checkSchedule ? ['APPROVAL', 'PUBLISH'] : ['PUBLISHING'];
+        if (!run || !run.validTarget || run.published || run.rejected || !run.companyActive
+          || run.contentId !== input.contentId || run.socialAccountId !== input.socialAccountId
+          || publication?.id !== run.publicationId || !requiredStages.includes(run.stage)
+          || run.scheduledFor.getTime() > Date.now() || run.pausedQueues.includes('social-publishing')
+          || run.generation?.asset?.id !== input.videoAssetId || !run.generation?.asset?.publishable
+          || !scheduledVideoPassed(run) /* || (run.approvalMode === 'MANUAL' && !run.approved) */) {
+          reasons.push('The scheduled revision, exact validated video, editorial approval or publication time is ineligible.');
+        }
+      } else if (publication?.scheduleId) {
+        reasons.push('This publication must pass through its scheduled preparation.');
+      }
     }
 
     // TEMP: bypass editorial approval + video validation for end-to-end publish testing.
@@ -64,7 +85,7 @@ export class PublicationGateServiceImpl extends PublicationGateService {
     }
 
     const credential = await this.socialCredentialRepository.findActiveBySocialAccount(input.socialAccountId);
-    if (!credential || !credential.isActive()) {
+    if (!credential || !credential.isActive() || (input.scheduleId && credential.companyId !== input.companyId)) {
       reasons.push('The social account is disconnected or has no active credentials. Reconnect Instagram before publishing.');
     }
 
