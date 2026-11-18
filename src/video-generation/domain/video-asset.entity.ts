@@ -19,6 +19,7 @@ export class VideoAsset {
   ) {}
 
   static create(props: {
+    id?: string;
     companyId: string;
     contentId: string;
     provider: string;
@@ -32,7 +33,7 @@ export class VideoAsset {
     errorMessage?: string | null;
   }): VideoAsset {
     return new VideoAsset(
-      crypto.randomUUID(),
+      props.id ?? crypto.randomUUID(),
       props.companyId,
       props.contentId,
       props.provider,

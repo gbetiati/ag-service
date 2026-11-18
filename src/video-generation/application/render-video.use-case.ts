@@ -27,20 +27,28 @@ export class RenderVideoUseCase {
       throw new NotFoundException('Video asset does not have a render job');
     }
 
-    const renderStatus = await this.videoProvider.getRenderStatus(asset.renderJobId);
+    const renderStatus = await this.videoProvider.getRenderStatus(
+      asset.renderJobId,
+    );
     if (!renderStatus.renderJobId) {
       throw new NotFoundException('Video render job status unavailable');
     }
 
-    const nextStatus = renderStatus.status === 'FAILED' ? 'FAILED' : renderStatus.status === 'READY' ? 'READY' : 'RENDERING';
+    const nextStatus =
+      renderStatus.status === 'FAILED'
+        ? 'FAILED'
+        : renderStatus.status === 'READY'
+          ? 'READY'
+          : 'RENDERING';
 
-    const mergedMetadata = asset.metadata && renderStatus.metadata
-      ? { ...asset.metadata, ...renderStatus.metadata }
-      : asset.metadata
-        ? { ...asset.metadata }
-        : renderStatus.metadata
-          ? { ...renderStatus.metadata }
-          : null;
+    const mergedMetadata =
+      asset.metadata && renderStatus.metadata
+        ? { ...asset.metadata, ...renderStatus.metadata }
+        : asset.metadata
+          ? { ...asset.metadata }
+          : renderStatus.metadata
+            ? { ...renderStatus.metadata }
+            : null;
 
     let nextAsset = new VideoAsset(
       asset.id,
@@ -60,20 +68,31 @@ export class RenderVideoUseCase {
     );
 
     if (renderStatus.status === 'READY') {
-      const finalBuffer = await this.videoProvider.fetchFinalVideo(asset.renderJobId);
+      const finalVideoStream = await this.videoProvider.fetchFinalVideo(
+        asset.renderJobId,
+      );
       const upload = await this.storageProvider.upload({
-        buffer: finalBuffer,
+        stream: finalVideoStream,
         originalName: `${asset.id}.mp4`,
         mimeType: 'video/mp4',
         directory: 'videos',
       });
-      const readyMetadata = asset.metadata && renderStatus.metadata
-        ? { ...asset.metadata, ...renderStatus.metadata, storageUrl: upload.url }
-        : asset.metadata
-          ? { ...asset.metadata, storageUrl: upload.url }
-          : renderStatus.metadata
-            ? { ...renderStatus.metadata, storageUrl: upload.url }
-            : { storageUrl: upload.url };
+      if (upload.sizeBytes === 0) {
+        await this.storageProvider.delete(upload.key);
+        throw new Error('Creatomate returned an empty video file.');
+      }
+      const readyMetadata =
+        asset.metadata && renderStatus.metadata
+          ? {
+              ...asset.metadata,
+              ...renderStatus.metadata,
+              storageUrl: upload.url,
+            }
+          : asset.metadata
+            ? { ...asset.metadata, storageUrl: upload.url }
+            : renderStatus.metadata
+              ? { ...renderStatus.metadata, storageUrl: upload.url }
+              : { storageUrl: upload.url };
 
       nextAsset = new VideoAsset(
         asset.id,

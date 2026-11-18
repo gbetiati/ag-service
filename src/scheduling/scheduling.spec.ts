@@ -31,7 +31,12 @@ describe('scheduling module', () => {
       getQueueStatus: vi.fn(),
     };
 
-    const useCase = new SchedulePublicationUseCase(publicationRepository as any, automationStateRepository as any, queueService as any);
+    const useCase = new SchedulePublicationUseCase(
+      publicationRepository as any,
+      automationStateRepository as any,
+      queueService as any,
+      { authorize: vi.fn().mockResolvedValue({ allowed: true, reasons: [] }) } as any,
+    );
     const result = await useCase.execute({
       companyId: 'company-1',
       publicationId: publication.id,

@@ -39,4 +39,12 @@ export class SocialCredential {
       input.updatedAt ?? new Date(),
     );
   }
+
+  isExpired(now: Date = new Date()): boolean {
+    return this.expiresAt !== null && this.expiresAt.getTime() <= now.getTime();
+  }
+
+  isActive(now: Date = new Date()): boolean {
+    return !this.isExpired(now);
+  }
 }
