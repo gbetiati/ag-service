@@ -1,0 +1,798 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum ApprovalMode {
+  MANUAL
+  AUTOMATIC
+}
+
+enum CompanyMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum IdentityTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum BrandStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum ValidationStatus {
+  PENDING
+  PROCESSING
+  APPROVED
+  REJECTED
+  INCONCLUSIVE
+  FAILED
+}
+
+enum SocialPlatform {
+  INSTAGRAM
+}
+
+enum SocialAccountStatus {
+  ACTIVE
+  INACTIVE
+  REVOKED
+}
+
+enum PublicationStatus {
+  DRAFT
+  QUEUED
+  SCHEDULED
+  PUBLISHED
+  FAILED
+  REJECTED
+}
+
+enum MediaAssetKind {
+  IMAGE
+  VIDEO
+  DOCUMENT
+}
+
+enum ContentStatus {
+  DRAFT
+  SCHEDULED
+  APPROVED
+  REJECTED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ContentPillarStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ContentIdeaStatus {
+  DRAFT
+  READY
+  ARCHIVED
+}
+
+enum ContentPlanStatus {
+  DRAFT
+  READY
+  SCHEDULED
+  ARCHIVED
+}
+
+enum ContentCalendarStatus {
+  PLANNED
+  PUBLISHED
+  SKIPPED
+  CANCELLED
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  READ
+  FAILED
+}
+
+enum VideoAssetStatus {
+  QUEUED
+  RENDERING
+  READY
+  FAILED
+}
+
+enum VideoGenerationStatus {
+  QUEUED
+  RENDERING
+  READY
+  FAILED
+}
+
+model Company {
+  id           String        @id @default(uuid())
+  name         String
+  slug         String        @unique
+  description  String?
+  status       CompanyStatus @default(ACTIVE)
+  approvalMode ApprovalMode  @default(MANUAL)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  brands            Brand[]
+  brandRules        BrandRule[]
+  categories        ProductCategory[]
+  products          Product[]
+  mediaAssets       MediaAsset[]
+  contents          Content[]
+  videoAssets       VideoAsset[]
+  videoGenerations  VideoGeneration[]
+  validations       ContentValidation[]
+  socialAccounts    SocialAccount[]
+  socialCredentials SocialCredential[]
+  publications      Publication[]
+  automationStates  AutomationState[]
+  contentPillars    ContentPillar[]
+  contentIdeas      ContentIdea[]
+  contentPlans      ContentPlan[]
+  calendarEntries   ContentCalendar[]
+  processingHistory ProcessingHistory[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  members           CompanyMember[]
+  invitations       CompanyInvitation[]
+  activeSessions    RefreshSession[]    @relation("ActiveCompanySessions")
+
+  @@map("companies")
+}
+
+model User {
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  passwordHash    String
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships     CompanyMember[]
+  refreshSessions RefreshSession[]
+  identityTokens  IdentityToken[]
+  sentInvitations CompanyInvitation[] @relation("InvitationSender")
+
+  @@map("users")
+}
+
+model CompanyMember {
+  id        String            @id @default(uuid())
+  userId    String
+  companyId String
+  role      CompanyMemberRole @default(MEMBER)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([companyId, role])
+  @@map("company_members")
+}
+
+model RefreshSession {
+  id              String    @id @default(uuid())
+  userId          String
+  activeCompanyId String?
+  tokenHash       String    @unique
+  expiresAt       DateTime
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeCompany Company? @relation("ActiveCompanySessions", fields: [activeCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("refresh_sessions")
+}
+
+model IdentityToken {
+  id         String            @id @default(uuid())
+  userId     String
+  tokenHash  String            @unique
+  type       IdentityTokenType
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+  @@map("identity_tokens")
+}
+
+model CompanyInvitation {
+  id              String            @id @default(uuid())
+  companyId       String
+  invitedByUserId String
+  email           String
+  role            CompanyMemberRole
+  tokenHash       String            @unique
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime          @default(now())
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invitedBy User    @relation("InvitationSender", fields: [invitedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, email, acceptedAt])
+  @@index([expiresAt])
+  @@map("company_invitations")
+}
+
+model Brand {
+  id          String      @id @default(uuid())
+  companyId   String
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String
+  description String?
+  status      BrandStatus @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  rules    BrandRule[]
+  products Product[]
+  contents Content[]
+  ideas    ContentIdea[]
+  plans    ContentPlan[]
+
+  @@unique([companyId, slug])
+  @@map("brands")
+}
+
+model BrandRule {
+  id         String   @id @default(uuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  brandId    String
+  brand      Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  title      String
+  ruleText   String
+  isRequired Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([brandId, title])
+  @@map("brand_rules")
+}
+
+model ProductCategory {
+  id          String            @id @default(uuid())
+  companyId   String
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parentId    String?
+  parent      ProductCategory?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    ProductCategory[] @relation("CategoryHierarchy")
+  name        String
+  slug        String
+  description String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  products Product[]
+
+  @@unique([companyId, slug])
+  @@map("product_categories")
+}
+
+model Product {
+  id          String           @id @default(uuid())
+  companyId   String
+  company     Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  brandId     String?
+  brand       Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  categoryId  String?
+  category    ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name        String
+  slug        String
+  sku         String?
+  description String?
+  priceCents  Int?
+  status      ProductStatus    @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  mediaAssets MediaAsset[]
+  contents    Content[]
+  ideas       ContentIdea[]
+  plans       ContentPlan[]
+
+  @@unique([companyId, slug])
+  @@index([companyId, brandId])
+  @@map("products")
+}
+
+model MediaAsset {
+  id           String         @id @default(uuid())
+  companyId    String
+  company      Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  productId    String?
+  product      Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  kind         MediaAssetKind @default(IMAGE)
+  fileName     String
+  originalName String
+  storageKey   String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  metadata     Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([companyId, productId])
+  @@map("media_assets")
+}
+
+model ProcessingHistory {
+  id         String   @id @default(uuid())
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  entityType String
+  entityId   String
+  stage      String
+  status     String
+  message    String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([companyId, entityType, entityId])
+  @@index([companyId, status])
+  @@map("processing_history")
+}
+
+model Notification {
+  id        String               @id @default(uuid())
+  companyId String
+  company   Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  channel   String
+  title     String
+  message   String
+  priority  NotificationPriority @default(NORMAL)
+  status    NotificationStatus   @default(PENDING)
+  metadata  Json?
+  readAt    DateTime?
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  @@index([companyId, status])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actorType    String
+  actorId      String?
+  resourceType String
+  resourceId   String?
+  action       String
+  details      Json?
+  createdAt    DateTime @default(now())
+
+  @@index([companyId, action])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+model ContentPillar {
+  id          String              @id @default(uuid())
+  companyId   String
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  status      ContentPillarStatus @default(ACTIVE)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  ideas ContentIdea[]
+  plans ContentPlan[]
+
+  @@unique([companyId, name])
+  @@map("content_pillars")
+}
+
+model ContentIdea {
+  id             String                       @id @default(uuid())
+  companyId      String
+  company        Company                      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  pillarId       String?
+  pillar         ContentPillar?               @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  brandId        String?
+  brand          Brand?                       @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  productId      String?
+  product        Product?                     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title          String
+  summary        String
+  targetAudience String?
+  angle          String?
+  status         ContentIdeaStatus            @default(DRAFT)
+  embedding      Unsupported("vector(1536)")?
+  createdAt      DateTime                     @default(now())
+  updatedAt      DateTime                     @updatedAt
+
+  scheduledPublications ScheduledPublication[]
+
+  @@index([companyId, status])
+  @@index([companyId, pillarId])
+  @@map("content_ideas")
+}
+
+model ContentPlan {
+  id           String            @id @default(uuid())
+  companyId    String
+  company      Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  pillarId     String?
+  pillar       ContentPillar?    @relation(fields: [pillarId], references: [id], onDelete: SetNull)
+  brandId      String?
+  brand        Brand?            @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  productId    String?
+  product      Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title        String
+  objective    String?
+  status       ContentPlanStatus @default(DRAFT)
+  scheduledFor DateTime?
+  metadata     Json?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  calendarEntries ContentCalendar[]
+
+  @@index([companyId, status])
+  @@map("content_plans")
+}
+
+model ContentCalendar {
+  id           String                @id @default(uuid())
+  companyId    String
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  planId       String?
+  plan         ContentPlan?          @relation(fields: [planId], references: [id], onDelete: SetNull)
+  contentId    String?
+  content      Content?              @relation(fields: [contentId], references: [id], onDelete: SetNull)
+  scheduledFor DateTime
+  channel      String
+  status       ContentCalendarStatus @default(PLANNED)
+  notes        String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([companyId, scheduledFor])
+  @@map("content_calendar")
+}
+
+model Content {
+  id                String                       @id @default(uuid())
+  companyId         String
+  company           Company                      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  brandId           String?
+  brand             Brand?                       @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  productId         String?
+  product           Product?                     @relation(fields: [productId], references: [id], onDelete: SetNull)
+  title             String
+  slug              String
+  status            ContentStatus                @default(DRAFT)
+  script            String?
+  brief             String?
+  editorialMetadata Json?
+  embedding         Unsupported("vector(1536)")?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  scenes           ContentScene[]
+  assets           ContentAsset[]
+  history          ContentHistory[]
+  videoAssets      VideoAsset[]
+  videoGenerations VideoGeneration[]
+  validations      ContentValidation[]
+  publications     Publication[]
+  calendarEntries  ContentCalendar[]
+  scheduledPublications ScheduledPublication[]
+
+  @@unique([companyId, slug])
+  @@index([companyId, status])
+  @@map("contents")
+}
+
+model ContentScene {
+  id              String   @id @default(uuid())
+  contentId       String
+  content         Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  sceneIndex      Int
+  heading         String?
+  shotList        String?
+  visualNotes     String?
+  durationSeconds Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([contentId, sceneIndex])
+  @@map("content_scenes")
+}
+
+model ContentAsset {
+  id           String   @id @default(uuid())
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  mediaAssetId String?
+  role         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([contentId, role])
+  @@map("content_assets")
+}
+
+model ContentHistory {
+  id           String   @id @default(uuid())
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  action       String
+  previousData Json?
+  newData      Json?
+  createdAt    DateTime @default(now())
+
+  @@index([contentId, createdAt])
+  @@map("content_history")
+}
+
+model VideoAsset {
+  id              String           @id @default(uuid())
+  companyId       String
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contentId       String
+  content         Content          @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  provider        String
+  status          VideoAssetStatus @default(QUEUED)
+  renderJobId     String?
+  storageKey      String?
+  mimeType        String?
+  sizeBytes       Int?
+  durationSeconds Int?
+  metadata        Json?
+  errorMessage    String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  validations ContentValidation[]
+  generation  VideoGeneration?
+
+  @@index([companyId, contentId])
+  @@index([status])
+  @@map("video_assets")
+}
+
+model VideoGeneration {
+  id           String                @id @default(uuid())
+  companyId    String
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contentId    String
+  content      Content               @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  provider     String
+  status       VideoGenerationStatus @default(QUEUED)
+  renderJobId  String?
+  videoAssetId String?               @unique
+  videoAsset   VideoAsset?           @relation(fields: [videoAssetId], references: [id], onDelete: SetNull)
+  request      Json
+  errorMessage String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  @@index([companyId, status])
+  scheduledPublication ScheduledPublication?
+
+  @@index([contentId, createdAt])
+  @@map("video_generations")
+}
+
+model ContentValidation {
+  id               String           @id @default(uuid())
+  companyId        String
+  company          Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contentId        String
+  content          Content          @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  videoAssetId     String
+  videoAsset       VideoAsset       @relation(fields: [videoAssetId], references: [id], onDelete: Cascade)
+  status           ValidationStatus @default(PENDING)
+  validatorVersion String
+  summary          String?
+  failureReason    String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  results ValidationResult[]
+
+  @@unique([contentId, videoAssetId])
+  @@index([companyId, status])
+  @@map("content_validations")
+}
+
+model SocialAccount {
+  id            String              @id @default(uuid())
+  companyId     String
+  company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  platform      SocialPlatform
+  accountHandle String
+  displayName   String?
+  status        SocialAccountStatus @default(ACTIVE)
+  metadata      Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  credentials  SocialCredential[]
+  publications Publication[]
+
+  @@unique([companyId, platform, accountHandle])
+  @@map("social_accounts")
+}
+
+model SocialCredential {
+  id                   String        @id @default(uuid())
+  companyId            String
+  company              Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  socialAccountId      String
+  socialAccount        SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  kind                 String
+  encryptedValue       String
+  initializationVector String
+  expiresAt            DateTime?
+  scopes               Json?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  @@index([socialAccountId, kind])
+  @@map("social_credentials")
+}
+
+model Publication {
+  id              String            @id @default(uuid())
+  companyId       String
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contentId       String
+  content         Content           @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  socialAccountId String
+  socialAccount   SocialAccount     @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  status          PublicationStatus @default(QUEUED)
+  provider        String
+  scheduledFor    DateTime?
+  publishedAt     DateTime?
+  externalPostId  String?
+  metadata        Json?
+  errorMessage    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  attempts PublicationAttempt[]
+  preparation ScheduledPublication?
+
+  @@unique([contentId, socialAccountId])
+  @@index([companyId, status])
+  @@map("publications")
+}
+
+model PublicationAttempt {
+  id               String            @id @default(uuid())
+  publicationId    String
+  publication      Publication       @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  attemptNumber    Int
+  status           PublicationStatus @default(QUEUED)
+  providerResponse Json?
+  errorMessage     String?
+  createdAt        DateTime          @default(now())
+
+  @@index([publicationId, attemptNumber])
+  @@map("publication_attempts")
+}
+
+model AutomationState {
+  id        String   @id @default(uuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  queueName String
+  paused    Boolean  @default(false)
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, queueName])
+  @@map("automation_states")
+}
+
+model ValidationResult {
+  id           String            @id @default(uuid())
+  validationId String
+  validation   ContentValidation @relation(fields: [validationId], references: [id], onDelete: Cascade)
+  checkName    String
+  status       ValidationStatus  @default(PENDING)
+  passed       Boolean           @default(false)
+  score        Float?
+  details      Json?
+  evidence     Json?
+  createdAt    DateTime          @default(now())
+
+  @@index([validationId, checkName])
+  @@map("validation_results")
+}
+
+enum ScheduledPublicationStage {
+  PREPARE
+  RENDER
+  VALIDATE
+  APPROVAL
+  PUBLISH
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  RECONCILIATION_REQUIRED
+}
+
+model ScheduledPublication {
+  id             String                    @id @default(uuid())
+  companyId      String
+  contentId      String
+  content        Content                   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  publicationId  String                    @unique
+  publication    Publication               @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  stage          ScheduledPublicationStage @default(PREPARE)
+  nextRunAt      DateTime?
+  leaseUntil     DateTime?
+  attempts       Int                       @default(0)
+  scriptResponseId String?                 @unique
+  scriptRevision   String?
+  providerNotified Boolean                 @default(false)
+  contentIdeaId  String?
+  contentIdea    ContentIdea?              @relation(fields: [contentIdeaId], references: [id], onDelete: SetNull)
+  generationId   String?                   @unique
+  generation     VideoGeneration?          @relation(fields: [generationId], references: [id], onDelete: SetNull)
+  revision       String?
+  approvedAt     DateTime?
+  errorMessage   String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@index([nextRunAt])
+  @@index([companyId, contentId])
+  @@map("scheduled_publications")
+}

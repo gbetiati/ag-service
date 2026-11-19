@@ -1,0 +1,57 @@
+# Compiled output
+/dist
+**/dist
+
+# Dependencies
+/node_modules
+**/node_modules
+
+# Environment files
+.env*
+!.env.example
+.docker.env*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS
+.DS_Store
+
+# Tests
+/coverage
+/.nyc_output
+
+# TypeScript build info
+*.tsbuildinfo
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Local configuration
+firebase.json
+matheus-docker-compose.yml
+
+# AI / agent tooling (local only)
+.agents/
+.claude/
+settings.local.json
+**/settings.local.json
