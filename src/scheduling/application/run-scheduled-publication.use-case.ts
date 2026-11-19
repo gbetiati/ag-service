@@ -6,10 +6,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ContentStrategy } from '../../content-strategy/application/content-strategy.service.js';
-import { ContentStrategyError } from '../../content-strategy/domain/scheduled-content-ai.interface.js';
+import { AsyncScheduledContentAi, ContentStrategyError, ScriptSubmissionUncertain } from '../../content-strategy/domain/scheduled-content-ai.interface.js';
 import { PublishContentUseCase } from '../../publication/application/publish-content.use-case.js';
 import { PublicationGateService } from '../../publication/domain/publication-gate.service.interface.js';
-import { SchedulingQueueService } from '../domain/queue.service.interface.js';
+import { ProcessVideoGenerationUseCase } from '../../video-generation/application/process-video-generation.use-case.js';
+import { VideoRenderRequestError } from '../../video-generation/domain/video-provider.interface.js';
 import {
   ScheduleJob,
   ScheduledPublicationRepository,
@@ -17,9 +18,8 @@ import {
   ScheduleStage,
   scheduledVideoPassed,
 } from '../domain/scheduled-publication.repository.js';
-import { ScheduledPublicationQueue } from './scheduled-publication-queue.service.js';
 
-const POLL_MS = 10_000;
+const CALLBACK_RECOVERY_MS = 90_000;
 const MAX_STAGE_MS = 60 * 60_000;
 const PUBLISH_RECONCILIATION_MS = 30 * 60_000;
 
@@ -30,8 +30,8 @@ export class RunScheduledPublicationUseCase {
   constructor(
     private readonly scheduledPublicationRepository: ScheduledPublicationRepository,
     private readonly contentStrategy: ContentStrategy,
-    private readonly queues: SchedulingQueueService,
-    private readonly scheduleQueue: ScheduledPublicationQueue,
+    private readonly scriptProvider: AsyncScheduledContentAi,
+    private readonly videoGeneration: ProcessVideoGenerationUseCase,
     private readonly publicationGateService: PublicationGateService,
     private readonly publishContentUseCase: PublishContentUseCase,
   ) { }
@@ -108,84 +108,95 @@ export class RunScheduledPublicationUseCase {
   }
 
   private async prepare(run: ScheduledRun): Promise<void> {
-    if (run.attempts > 3) {
-      await this.move(
-        run,
-        'FAILED',
-        null,
-        'Editorial preparation exhausted its attempts.',
-      );
+    if (run.scriptRevision && !run.scriptResponseId) {
+      await this.move(run, 'RECONCILIATION_REQUIRED', null, 'OpenAI submission has no recorded response ID. Verify it before rescheduling.');
       return;
     }
-    try {
-      const context = await this.scheduledPublicationRepository.context(run);
-      console.log('context LOG', context)
-      if (!context) {
-        await this.move(
-          run,
-          'FAILED',
-          null,
-          'The content or brand is no longer available for this company.',
-        );
-        return;
-      }
-      const idea = await this.contentStrategy.prepare(context.instructions);
-        console.log('idea LOG', idea)
 
-      await this.scheduledPublicationRepository.prepare(run, idea, context.revision);
-    } catch (error) {
-      if (error instanceof ContentStrategyError && error.retryable && run.attempts < 3) {
-        await this.move(
-          run,
-          'PREPARE',
-          new Date(Date.now() + 5_000 * 2 ** (run.attempts - 1)),
-          error.message,
-          run.attempts,
-        );
+    const context = await this.scheduledPublicationRepository.context(run);
+    if (!context || (run.scriptRevision && context.revision !== run.scriptRevision)) {
+      await this.move(run, 'FAILED', null, 'The content changed or is no longer available for this company.');
+      return;
+    }
+    if (!run.scriptResponseId && run.attempts > 3) {
+      await this.move(run, 'FAILED', null, 'Editorial preparation exhausted its attempts.');
+      return;
+    }
+
+    let submitted = false;
+    try {
+      this.contentStrategy.requireMedia(context.instructions);
+      if (run.scriptResponseId) {
+        if (run.attempts > 12) {
+          await this.move(run, 'FAILED', null, 'The OpenAI response did not complete within the recovery budget.');
+          return;
+        }
+        const draft = await this.scriptProvider.result(run.scriptResponseId);
+        if (!draft) {
+          await this.wait(run, 'Waiting for the OpenAI webhook.', CALLBACK_RECOVERY_MS, run.attempts);
+          return;
+        }
+        this.contentStrategy.validateDraft(context.instructions, draft);
+        await this.scheduledPublicationRepository.prepare(run, draft, context.revision);
         return;
       }
-      await this.move(
-        run,
-        'FAILED',
-        null,
-        error instanceof ContentStrategyError || error instanceof ConflictException ?
-          error.message : 'Unable to persist the editorial preparation.',
-      );
+
+      if (!await this.scheduledPublicationRepository.startScript(run, context.revision)) return;
+      submitted = true;
+      const responseId = await this.scriptProvider.submit(context.instructions);
+      if (!await this.scheduledPublicationRepository.saveScriptResponse(run, responseId)) return;
+      await this.wait(run, 'Waiting for the OpenAI webhook.', CALLBACK_RECOVERY_MS, 0);
+    } catch (error) {
+      if (error instanceof ScriptSubmissionUncertain || (submitted && !(error instanceof ContentStrategyError))) {
+        await this.move(run, 'RECONCILIATION_REQUIRED', null, 'OpenAI submission outcome is unknown. Verify the request before retrying.');
+        return;
+      }
+      if (submitted) await this.scheduledPublicationRepository.saveScriptResponse(run, null);
+      if (error instanceof ContentStrategyError && error.retryable && run.attempts < (run.scriptResponseId ? 12 : 3)) {
+        const delay = run.scriptResponseId ? CALLBACK_RECOVERY_MS : 5_000 * 2 ** (run.attempts - 1);
+        await this.wait(run, error.message, delay, run.attempts);
+        return;
+      }
+      await this.move(run, 'FAILED', null, error instanceof ContentStrategyError || error instanceof ConflictException
+        ? error.message : 'Unable to persist the editorial preparation.');
     }
   }
 
   private async render(run: ScheduledRun): Promise<void> {
     const generation = run.generation;
-
     if (generation?.asset?.ready) {
       await this.move(run, 'VALIDATE', new Date());
       return;
     }
-    
     if (!generation || ['FAILED', 'READY'].includes(generation.status) || Date.now() - generation.createdAt.getTime() > MAX_STAGE_MS) {
-      const stage = generation?.error?.startsWith('Render submission outcome is unknown')
-        ? 'RECONCILIATION_REQUIRED'
-        : 'FAILED';
-      await this.move(
-        run,
-        stage,
-        null,
-        generation?.error ??
-        'Rendering failed, exceeded its one-hour limit, or has no ready asset.',
-      );
+      const stage = generation?.error?.startsWith('Render submission outcome is unknown') ? 'RECONCILIATION_REQUIRED' : 'FAILED';
+      await this.move(run, stage, null, generation?.error ?? 'Rendering failed, exceeded its one-hour limit, or has no ready asset.');
       return;
     }
 
-    await this.dispatchMedia(
-      run,
-      {
-        queueName: 'video-generation',
-        jobName: 'generate-video',
-        data: { companyId: run.companyId, videoGenerationId: generation.id },
-        jobId: `scheduled-render-${generation.id}`,
-      },
-      generation.error ?? 'Waiting for video generation.',
-    );
+    try {
+      const video = await this.videoGeneration.execute({ companyId: run.companyId, videoGenerationId: generation.id });
+      if (video.status === 'READY' && video.videoAssetId) {
+        await this.move(run, 'VALIDATE', new Date());
+        return;
+      }
+      if (video.status === 'FAILED') {
+        const uncertain = video.errorMessage?.startsWith('Render submission outcome is unknown');
+        await this.move(run, uncertain ? 'RECONCILIATION_REQUIRED' : 'FAILED', null, video.errorMessage ?? 'Video generation failed.');
+        return;
+      }
+      await this.wait(run, 'Waiting for the Creatomate webhook.', CALLBACK_RECOVERY_MS, 0);
+    } catch (error) {
+      if (error instanceof VideoRenderRequestError && !error.retryable) {
+        await this.move(run, 'FAILED', null, error.message);
+        return;
+      }
+      if (run.attempts >= 3 && (generation.renderJobId || error instanceof VideoRenderRequestError)) {
+        await this.move(run, 'FAILED', null, 'Video generation exhausted its recovery attempts.');
+        return;
+      }
+      await this.wait(run, 'Could not complete the render step. Waiting for provider reconciliation.', CALLBACK_RECOVERY_MS, run.attempts);
+    }
   }
 
   private async validate(run: ScheduledRun): Promise<void> {
@@ -339,43 +350,8 @@ export class RunScheduledPublicationUseCase {
     await this.move(claimed, 'PUBLISHED', null);
   }
 
-  private async dispatchMedia(
-    run: ScheduledRun,
-    job: {
-      queueName: 'video-generation' | 'video-validation';
-      jobName: string;
-      data: Record<string, unknown>;
-      jobId: string;
-    },
-    pending: string,
-  ): Promise<void> {
-    try {
-      const state = await this.queues.getJobState(job.queueName, job.jobId);
-      if (state === 'failed') {
-        await this.move(
-          run,
-          'FAILED',
-          null,
-          run.generation?.error ?? run.validation?.reason ?? pending,
-        );
-        return;
-      }
-      await this.queues.schedule({ ...job, attempts: 3, deduplicate: true });
-      await this.wait(run, pending);
-    } catch {
-      await this.wait(
-        run,
-        'The media queue is unavailable; waiting for reconciliation.',
-      );
-    }
-  }
-
-  private async wait(
-    run: ScheduledRun,
-    reason: string,
-    delay = POLL_MS,
-  ): Promise<void> {
-    await this.move(run, run.stage, new Date(Date.now() + delay), reason);
+  private async wait(run: ScheduledRun, reason: string, delay: number, attempts?: number): Promise<void> {
+    await this.move(run, run.stage, new Date(Date.now() + delay), reason, attempts);
   }
 
   private async move(
@@ -401,6 +377,5 @@ export class RunScheduledPublicationUseCase {
         reason: error,
       });
     }
-    if (updated) await this.scheduleQueue.enqueue(updated);
   }
 }

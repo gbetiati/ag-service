@@ -12,6 +12,7 @@ export type VideoGenerationRequest = {
   sourceMediaAssetIds?: string[];
   sourceMediaUrls?: string[];
   outputFormat?: string;
+  callbackReference?: string;
 };
 
 export type VideoGenerationResult = {
@@ -32,6 +33,6 @@ export abstract class VideoProvider {
   abstract createRenderJob(
     request: VideoGenerationRequest,
   ): Promise<VideoGenerationResult>;
-  abstract getRenderStatus(jobId: string): Promise<VideoGenerationResult>;
-  abstract fetchFinalVideo(jobId: string): Promise<Readable>;
+  abstract getRenderStatus(jobId: string, callbackRender?: boolean): Promise<VideoGenerationResult>;
+  abstract fetchFinalVideo(jobId: string, callbackRender?: boolean): Promise<Readable>;
 }

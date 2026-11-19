@@ -95,3 +95,23 @@ Run the scheduling integration tests with
 `SCHEDULING_TEST_DATABASE_URL`, `REDIS_HOST` and `REDIS_PORT` to isolated services.
 Apply the Prisma migrations on the test database first. The tests use PostgreSQL
 and Redis while substituting external AI and publishing responses.
+
+### Scheduled provider webhooks
+
+Set `PUBLIC_API_BASE_URL` to the public HTTPS origin of the backend. In the
+OpenAI project that owns the API key, register
+`POST /webhooks/scheduling/openai` for `response.completed`, `response.failed`,
+`response.incomplete` and `response.cancelled`. Set
+`SCHEDULED_OPENAI_WEBHOOK_SECRET` to the OpenAI signing secret. Choose a
+`SCHEDULED_CONTENT_OPENAI_MODEL` that supports Responses API background mode
+and JSON output. Background mode uses stored OpenAI responses.
+
+Set `SCHEDULED_CREATOMATE_WEBHOOK_SECRET` to a random secret of at least 32
+characters. Scheduled renders register a per-render callback URL automatically.
+The callback only wakes the scheduled job after checking the render ID. The
+worker confirms the result with the Creatomate API before downloading the file.
+
+PostgreSQL records the pending response or render. A webhook makes its next
+step eligible, and the reconciler picks it up on its next scan. After 90 seconds
+without a callback, the worker can recover using the persisted provider ID.
+Existing manual render flows keep their original polling path.

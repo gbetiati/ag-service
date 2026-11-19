@@ -24,10 +24,14 @@ import { ContentStrategy } from './application/content-strategy.service.js';
 import { ScheduledContentAi } from './domain/scheduled-content-ai.interface.js';
 import { OpenAiScheduledContentService } from './infra/services/openai-scheduled-content.service.js';
 
+import { AsyncScheduledContentAi } from './domain/scheduled-content-ai.interface.js';
+import { OpenAiBackgroundScriptService } from './infra/services/openai-background-script.service.js';
+
 @Module({
   imports: [PrismaModule, CompaniesModule, BrandsModule, ProductsModule],
   controllers: [ContentStrategyController],
   providers: [
+    { provide: AsyncScheduledContentAi, useClass: OpenAiBackgroundScriptService },
     ContentStrategy,
     { provide: ScheduledContentAi, useClass: OpenAiScheduledContentService },
     CreateContentPillarUseCase,
@@ -57,6 +61,7 @@ import { OpenAiScheduledContentService } from './infra/services/openai-scheduled
     },
   ],
   exports: [
+    AsyncScheduledContentAi,
     ContentStrategy,
     ContentPillarRepository,
     ContentIdeaRepository,

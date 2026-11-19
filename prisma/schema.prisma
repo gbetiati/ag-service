@@ -779,6 +779,9 @@ model ScheduledPublication {
   nextRunAt      DateTime?
   leaseUntil     DateTime?
   attempts       Int                       @default(0)
+  scriptResponseId String?                 @unique
+  scriptRevision   String?
+  providerNotified Boolean                 @default(false)
   contentIdeaId  String?
   contentIdea    ContentIdea?              @relation(fields: [contentIdeaId], references: [id], onDelete: SetNull)
   generationId   String?                   @unique

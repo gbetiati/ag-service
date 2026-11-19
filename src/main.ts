@@ -4,7 +4,7 @@ import { createBullBoardBasicAuthMiddleware } from './scheduling/infra/bull-boar
 import { BullBoardService } from './scheduling/infra/bull-board/bull-board.service.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   const bullBoard = app.get(BullBoardService);
   if (bullBoard.isEnabled()) {

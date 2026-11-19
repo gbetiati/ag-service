@@ -17,9 +17,12 @@ import { ScheduledPublicationQueue } from './application/scheduled-publication-q
 import { RunScheduledPublicationUseCase } from './application/run-scheduled-publication.use-case.js';
 import { ScheduledPublicationProcessor } from './infra/processors/scheduled-publication.processor.js';
 
+import { ScheduledProviderWebhookController } from './infra/controllers/scheduled-provider-webhook.controller.js';
+import { VideoGenerationModule } from '../video-generation/video-generation.module.js';
+
 @Module({
-  imports: [PrismaModule, PublicationModule, BullBoardModule, ContentStrategyModule, ScheduledPublicationPersistenceModule],
-  controllers: [SchedulingController],
+  imports: [PrismaModule, PublicationModule, BullBoardModule, ContentStrategyModule, ScheduledPublicationPersistenceModule, VideoGenerationModule],
+  controllers: [SchedulingController, ScheduledProviderWebhookController],
   providers: [
     SchedulePublicationUseCase,
     ProcessScheduledContentUseCase,

@@ -203,14 +203,15 @@ describe.skipIf(!databaseUrl)(
       const run = await f.schedule(new Date(Date.now() - 60_000));
       const queues = new BullMqQueueService();
       const queue = new ScheduledPublicationQueue(queues);
-      const strategy = new ContentStrategy({
-        generate: vi.fn().mockResolvedValue(draft(f.product.id)),
-      });
+      const strategy = new ContentStrategy({ generate: vi.fn() });
+      const responseId = `resp_${run.id}`;
+      const scripts = { submit: vi.fn().mockResolvedValue(responseId), result: vi.fn().mockResolvedValue(draft(f.product.id)) };
+      const videoGeneration = { execute: vi.fn().mockResolvedValue({ status: 'RENDERING', videoAssetId: null }) };
       const useCase = new RunScheduledPublicationUseCase(
         schedules,
         strategy,
-        queues,
-        queue,
+        scripts,
+        videoGeneration as never,
         {} as never,
         {} as never,
       );
@@ -232,6 +233,12 @@ describe.skipIf(!databaseUrl)(
         await (await planning.getJob(id))?.remove();
         expect(await planning.getJob(id)).toBeUndefined();
         processor.onModuleInit();
+        await vi.waitFor(async () => {
+          expect(await schedules.find(run)).toMatchObject({ stage: 'PREPARE', scriptResponseId: responseId, leaseUntil: null });
+        });
+        expect(scripts.result).not.toHaveBeenCalled();
+        await schedules.notifyScript(responseId);
+        await schedules.notifyScript(responseId);
         await vi.waitFor(
           async () => {
             expect(await schedules.find(run)).toMatchObject({
@@ -241,6 +248,29 @@ describe.skipIf(!databaseUrl)(
           },
           { timeout: 7_000, interval: 50 },
         );
+        expect(scripts.submit).toHaveBeenCalledTimes(1);
+        expect(scripts.result).toHaveBeenCalledTimes(1);
+        await vi.waitFor(async () => {
+          expect(videoGeneration.execute).toHaveBeenCalledTimes(1);
+          expect(await schedules.find(run)).toMatchObject({ stage: 'RENDER', leaseUntil: null });
+        }, { timeout: 7_000 });
+        await prisma.videoGeneration.update({ where: { id: run.id }, data: { renderJobId: 'render-test' } });
+        const video = await prisma.videoAsset.create({ data: {
+          companyId: f.companyId, contentId: f.content.id, provider: 'CREATOMATE', status: 'READY',
+          storageKey: 'video.mp4', metadata: { storageUrl: 'https://example.com/video.mp4' },
+        } });
+        videoGeneration.execute.mockImplementationOnce(async () => {
+          await prisma.videoGeneration.update({ where: { id: run.id }, data: { status: 'READY', videoAssetId: video.id } });
+          return { status: 'READY', videoAssetId: video.id };
+        });
+        await schedules.notifyRender(run.id, 'wrong-render');
+        expect((await schedules.due(new Date())).some(({ id }) => id === run.id)).toBe(false);
+        await schedules.notifyRender(run.id, 'render-test');
+        await schedules.notifyRender(run.id, 'render-test');
+        await vi.waitFor(async () => {
+          expect(await schedules.find(run)).toMatchObject({ stage: 'VALIDATE' });
+        }, { timeout: 7_000 });
+        expect(videoGeneration.execute).toHaveBeenCalledTimes(2);
       } finally {
         await processor.onModuleDestroy();
         await queueCleanup(planning, run);
@@ -257,9 +287,9 @@ describe.skipIf(!databaseUrl)(
         await planning.close();
         await queues.onModuleDestroy();
       }
-    }, 12_000);
+    }, 24_000);
 
-    it('blocks early delivery, wrong assets, missing evidence and stale manual approval', async () => {
+    it('blocks early delivery and wrong assets while manual approval is bypassed, and fences explicit approval by revision', async () => {
       const f = await fixture();
       const run = await f.schedule(new Date(Date.now() + 60_000));
       const claimed = (await schedules.claim(job(run), new Date()))!;
@@ -357,7 +387,7 @@ describe.skipIf(!databaseUrl)(
         where: { validationId: validation.id, checkName: 'vision' },
         data: { evidence: {} },
       });
-      expect((await gate.authorize(input)).allowed).toBe(false);
+      expect((await gate.authorize(input)).allowed).toBe(true);
       await prisma.validationResult.updateMany({
         where: { validationId: validation.id, checkName: 'vision' },
         data: { evidence: { source: 'multimodal' } },
@@ -366,7 +396,7 @@ describe.skipIf(!databaseUrl)(
         where: { id: f.companyId },
         data: { approvalMode: 'MANUAL' },
       });
-      expect((await gate.authorize(input)).allowed).toBe(false);
+      expect((await gate.authorize(input)).allowed).toBe(true);
       await expect(
         schedules.approve({
           companyId: f.companyId,

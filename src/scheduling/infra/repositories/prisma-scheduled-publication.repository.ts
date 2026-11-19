@@ -138,6 +138,9 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
               contentIdeaId: null,
               generationId: null,
               revision: null,
+              scriptResponseId: null,
+              scriptRevision: null,
+              providerNotified: false,
               approvedAt: null,
               attempts: 0,
               errorMessage: null,
@@ -182,6 +185,13 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
   }
 
   async due(now: Date): Promise<ScheduleJob[]> {
+    await this.prisma.scheduledPublication.updateMany({
+      where: {
+        providerNotified: true, stage: { in: ['PREPARE', 'RENDER'] }, nextRunAt: { gt: now },
+        OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
+      },
+      data: { nextRunAt: now },
+    });
     const records = await this.prisma.scheduledPublication.findMany({
       where: {
         nextRunAt: { lte: now },
@@ -208,8 +218,9 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
         OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }],
       },
       data: {
-        leaseUntil: new Date(now.getTime() + 90_000),
+        leaseUntil: new Date(now.getTime() + (job.stage === 'RENDER' ? 300_000 : 90_000)),
         attempts: { increment: 1 },
+        providerNotified: false,
       },
     });
     return result.count ? this.find({ id, companyId }) : null;
@@ -295,6 +306,34 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
         })),
       },
     };
+  }
+
+  async startScript(run: ScheduledRun, revision: string): Promise<boolean> {
+    const result = await this.prisma.scheduledPublication.updateMany({
+      where: { ...this.claimed(run), scriptRevision: null }, data: { scriptRevision: revision },
+    });
+    return result.count === 1;
+  }
+
+  async saveScriptResponse(run: ScheduledRun, responseId: string | null): Promise<boolean> {
+    const result = await this.prisma.scheduledPublication.updateMany({
+      where: this.claimed(run),
+      data: responseId ? { scriptResponseId: responseId } : { scriptRevision: null },
+    });
+    return result.count === 1;
+  }
+
+  async notifyScript(responseId: string): Promise<void> {
+    await this.prisma.scheduledPublication.updateMany({
+      where: { scriptResponseId: responseId, stage: 'PREPARE' }, data: { providerNotified: true },
+    });
+  }
+
+  async notifyRender(generationId: string, renderId: string): Promise<void> {
+    await this.prisma.scheduledPublication.updateMany({
+      where: { generationId, stage: 'RENDER', generation: { renderJobId: renderId } },
+      data: { providerNotified: true },
+    });
   }
 
   async prepare(run: ScheduledRun, draft: ScheduledContentDraft, expectedRevision: string): Promise<boolean> {
@@ -613,6 +652,8 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
       nextRunAt: record.nextRunAt,
       leaseUntil: record.leaseUntil,
       attempts: record.attempts,
+      scriptResponseId: record.scriptResponseId,
+      scriptRevision: record.scriptRevision,
       contentIdeaId: record.contentIdeaId,
       createdAt: record.createdAt,
       errorMessage: record.errorMessage,
@@ -642,6 +683,7 @@ export class PrismaScheduledPublicationRepository extends ScheduledPublicationRe
           id: generation.id,
           status: generation.status,
           error: generation.errorMessage,
+          renderJobId: generation.renderJobId,
           createdAt: generation.createdAt,
           asset: asset
             ? {

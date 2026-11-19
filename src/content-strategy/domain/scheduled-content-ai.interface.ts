@@ -34,3 +34,10 @@ export abstract class ScheduledContentAi {
     context: ScheduledContentContext,
   ): Promise<ScheduledContentDraft>;
 }
+
+export abstract class AsyncScheduledContentAi {
+  abstract submit(context: ScheduledContentContext): Promise<string>;
+  abstract result(responseId: string): Promise<ScheduledContentDraft | null>;
+}
+
+export class ScriptSubmissionUncertain extends Error {}

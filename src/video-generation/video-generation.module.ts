@@ -56,6 +56,6 @@ import { VideoGenerationProcessor } from './infra/processors/video-generation.pr
       useClass: BullMqVideoGenerationQueue,
     },
   ],
-  exports: [VideoAssetRepository, VideoGenerationRepository],
+  exports: [VideoAssetRepository, VideoGenerationRepository, ProcessVideoGenerationUseCase],
 })
 export class VideoGenerationModule {}

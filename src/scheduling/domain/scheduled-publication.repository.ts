@@ -47,6 +47,8 @@ export type ScheduledRun = ScheduleKey & {
   nextRunAt: Date | null;
   leaseUntil: Date | null;
   attempts: number;
+  scriptResponseId: string | null;
+  scriptRevision: string | null;
   contentIdeaId: string | null;
   createdAt: Date;
   errorMessage: string | null;
@@ -62,6 +64,7 @@ export type ScheduledRun = ScheduleKey & {
     id: string;
     status: string;
     error: string | null;
+    renderJobId: string | null;
     createdAt: Date;
     asset: { id: string; ready: boolean; publishable: boolean } | null;
   } | null;
@@ -102,6 +105,10 @@ export abstract class ScheduledPublicationRepository {
     instructions: ScheduledContentContext;
     revision: string;
   } | null>;
+  abstract startScript(run: ScheduledRun, revision: string): Promise<boolean>;
+  abstract saveScriptResponse(run: ScheduledRun, responseId: string | null): Promise<boolean>;
+  abstract notifyScript(responseId: string): Promise<void>;
+  abstract notifyRender(generationId: string, renderId: string): Promise<void>;
   abstract prepare(
     run: ScheduledRun,
     draft: ScheduledContentDraft,

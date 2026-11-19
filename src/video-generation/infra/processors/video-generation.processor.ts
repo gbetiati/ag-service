@@ -57,6 +57,7 @@ export class VideoGenerationProcessor implements OnModuleInit, OnModuleDestroy {
 
   private async processJob(job: Job<VideoGenerationJobData>): Promise<void> {
     try {
+      if (job.id?.startsWith('scheduled-render-')) return;
       const asset = await this.processVideoGeneration.execute(job.data);
       if (typeof asset.request.scheduledRevision === 'string') return;
       if (asset.status === 'READY' && asset.videoAssetId) {

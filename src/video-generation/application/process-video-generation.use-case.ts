@@ -15,6 +15,7 @@ import { VideoGenerationRepository } from '../domain/video-generation.repository
 import {
   VideoGenerationResult,
   VideoProvider,
+  VideoRenderRequestError,
 } from '../domain/video-provider.interface.js';
 
 @Injectable()
@@ -104,27 +105,39 @@ export class ProcessVideoGenerationUseCase {
       }
     }
 
+    const scheduledSubmission = typeof scheduledRevision === 'string' && !generation.renderJobId;
     let renderResult: VideoGenerationResult;
     if (generation.renderJobId) {
-      renderResult = await this.videoProvider.getRenderStatus(
-        generation.renderJobId,
-      );
+      renderResult = generation.request.callbackRender === true
+        ? await this.videoProvider.getRenderStatus(generation.renderJobId, true)
+        : await this.videoProvider.getRenderStatus(generation.renderJobId);
     } else {
-      renderResult = await this.videoProvider.createRenderJob({
-        companyId: input.companyId,
-        contentId: content.id,
-        title: content.title,
-        script: content.script,
-        brandId: content.brandId,
-        productId: content.productId,
-        sourceMediaAssetIds: this.getSourceMediaAssetIds(generation.request),
-        sourceMediaUrls: useBrownieImage
-          ? [SCHEDULED_BROWNIE_IMAGE_URL]
-          : sourceMediaAssets.map((asset) => this.mediaAssetUrlProvider.createUrl(asset)),
-        outputFormat: this.getOutputFormat(generation.request),
-      });
+      try {
+        renderResult = await this.videoProvider.createRenderJob({
+          companyId: input.companyId,
+          contentId: content.id,
+          title: content.title,
+          script: content.script,
+          brandId: content.brandId,
+          productId: content.productId,
+          sourceMediaAssetIds: this.getSourceMediaAssetIds(generation.request),
+          sourceMediaUrls: useBrownieImage
+            ? [SCHEDULED_BROWNIE_IMAGE_URL]
+            : sourceMediaAssets.map((asset) => this.mediaAssetUrlProvider.createUrl(asset)),
+          outputFormat: this.getOutputFormat(generation.request),
+          ...(typeof scheduledRevision === 'string' ? { callbackReference: generation.id } : {}),
+        });
+      } catch (error) {
+        if (typeof scheduledRevision === 'string' && error instanceof VideoRenderRequestError) {
+          generation.status = error.retryable ? 'QUEUED' : 'FAILED';
+          generation.errorMessage = error.message;
+          await this.videoGenerationRepository.update(generation);
+        }
+        throw error;
+      }
     }
 
+    if (scheduledSubmission) generation.request.callbackRender = true;
     generation.renderJobId = renderResult.renderJobId;
     await this.videoGenerationRepository.update(generation);
     if (renderResult.status === 'FAILED') {
@@ -136,15 +149,15 @@ export class ProcessVideoGenerationUseCase {
       throw new Error(generation.errorMessage);
     }
 
-    if (renderResult.status !== 'READY') {
+    if (renderResult.status !== 'READY' || scheduledSubmission) {
       generation.status = 'RENDERING';
       await this.videoGenerationRepository.update(generation);
       return generation;
     }
 
-    const finalVideoStream = await this.videoProvider.fetchFinalVideo(
-      renderResult.renderJobId,
-    );
+    const finalVideoStream = generation.request.callbackRender === true
+      ? await this.videoProvider.fetchFinalVideo(renderResult.renderJobId, true)
+      : await this.videoProvider.fetchFinalVideo(renderResult.renderJobId);
     const outputFormat = this.getOutputFormat(generation.request);
     const mimeType =
       outputFormat === 'mp4' ? 'video/mp4' : `video/${outputFormat}`;

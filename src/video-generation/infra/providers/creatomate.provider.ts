@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'node:stream';
@@ -8,7 +9,7 @@ import {
   VideoRenderRequestError,
 } from '../../domain/video-provider.interface.js';
 
-const API_URL = 'https://api.creatomate.com/v1';
+const API_URL = 'https://api.creatomate.com';
 const REQUEST_TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 180_000;
 
@@ -31,8 +32,8 @@ export class CreatomateProvider extends VideoProvider {
     const source = this.createSource(request);
     const response = await this.requestJson('/renders', {
       method: 'POST',
-      body: JSON.stringify({ source }),
-    });
+      body: JSON.stringify({ source, ...this.callback(request.callbackReference) }),
+    }, !!request.callbackReference);
     const render = this.firstRender(response);
     if (typeof render.id !== 'string' || render.id.length === 0) {
       throw new Error('Creatomate did not return a render ID.');
@@ -41,16 +42,28 @@ export class CreatomateProvider extends VideoProvider {
     return this.mapRender(render);
   }
 
-  async getRenderStatus(jobId: string): Promise<VideoGenerationResult> {
+  private callback(reference?: string): { webhook_url?: string } {
+    if (!reference) return {};
+    const base = this.configService.get<string>('PUBLIC_API_BASE_URL');
+    const secret = this.configService.get<string>('SCHEDULED_CREATOMATE_WEBHOOK_SECRET');
+    if (!base?.startsWith('https://') || !secret || secret.length < 32) {
+      throw new VideoRenderRequestError('Configure public HTTPS PUBLIC_API_BASE_URL and SCHEDULED_CREATOMATE_WEBHOOK_SECRET (at least 32 characters).');
+    }
+    const signature = createHmac('sha256', secret).update(reference).digest('hex');
+    return { webhook_url: `${base.replace(/\/+$/, '')}/webhooks/scheduling/creatomate/${reference}/${signature}` };
+  }
+
+  async getRenderStatus(jobId: string, callbackRender = false): Promise<VideoGenerationResult> {
     const response = await this.requestJson(
       `/renders/${encodeURIComponent(jobId)}`,
       { method: 'GET' },
+      callbackRender,
     );
     return this.mapRender(this.firstRender(response, jobId));
   }
 
-  async fetchFinalVideo(jobId: string): Promise<Readable> {
-    const render = await this.getRenderStatus(jobId);
+  async fetchFinalVideo(jobId: string, callbackRender = false): Promise<Readable> {
+    const render = await this.getRenderStatus(jobId, callbackRender);
     if (render.status !== 'READY' || !render.finalUrl) {
       throw new Error(`Creatomate render ${jobId} is not ready for download.`);
     }
@@ -165,7 +178,7 @@ export class CreatomateProvider extends VideoProvider {
     };
   }
 
-  private async requestJson(path: string, init: RequestInit): Promise<unknown> {
+  private async requestJson(path: string, init: RequestInit, callbackRender = false): Promise<unknown> {
     const apiKey = this.configService.get<string>('CREATOMATE_API_KEY');
     if (!apiKey) {
       throw new VideoRenderRequestError('CREATOMATE_API_KEY is not configured.');
@@ -175,7 +188,7 @@ export class CreatomateProvider extends VideoProvider {
     headers.set('Authorization', `Bearer ${apiKey}`);
     headers.set('Content-Type', 'application/json');
     headers.set('Accept', 'application/json');
-    const response = await fetch(`${API_URL}${path}`, {
+    const response = await fetch(`${API_URL}/${callbackRender ? 'v2' : 'v1'}${path}`, {
       ...init,
       headers,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
